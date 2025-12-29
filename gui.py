@@ -279,8 +279,8 @@ class MainApplication(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("Video Subtitle Toolkit")
-        self.geometry("900x750")
-        self.minsize(800, 650)
+        self.geometry("900x850")
+        self.minsize(800, 750)
         self.configure(bg=Theme.BG_DARK)
         self._setup_styles()
         self.msg_queue = queue.Queue()
