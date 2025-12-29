@@ -329,45 +329,43 @@ def build_segments(eng_subs: List[Dict], rus_texts: List[str], video_duration_ms
     return segments
 
 
-def merge_segments(segments: List[Dict]) -> Tuple[List[Dict], List[Dict]]:
+def merge_segments(segments: List[Dict]) -> List[Dict]:
     """
-    Объединяет соседние сегменты с похожей скоростью.
-    Возвращает (merged_segments, subtitle_info для SRT).
+    Объединяет соседние GAP сегменты (не субтитры!).
+
+    ВАЖНО: Субтитры НИКОГДА не сливаются — каждый остаётся отдельным сегментом
+    для точного соответствия video ↔ subtitle.
     """
     if not segments:
-        return [], []
+        return []
 
-    # Сохраняем информацию о субтитрах ДО слияния
-    subtitle_info = []
+    merged = []
+    current = None
+
     for seg in segments:
         if seg['type'] == 'subtitle':
-            subtitle_info.append({
-                'sub_index': seg['sub_index'],
-                'orig_start_ms': seg['orig_start_ms'],
-                'orig_end_ms': seg['orig_end_ms'],
-                'speed': seg['speed'],
-                'text': seg['rus_text']
-            })
-
-    # Слияние сегментов
-    merged = []
-    current = segments[0].copy()
-    merge_count = 0
-
-    for next_seg in segments[1:]:
-        # Сливаем если скорости почти одинаковые
-        if abs(current['speed'] - next_seg['speed']) < MERGE_THRESHOLD:
-            current['orig_end_ms'] = next_seg['orig_end_ms']
-            merge_count += 1
+            # Субтитр — сохраняем предыдущий gap (если был) и добавляем субтитр
+            if current is not None:
+                merged.append(current)
+                current = None
+            merged.append(seg.copy())
         else:
-            merged.append(current)
-            current = next_seg.copy()
+            # Gap — можно слить с предыдущим gap
+            if current is None:
+                current = seg.copy()
+            else:
+                # Расширяем текущий gap
+                current['orig_end_ms'] = seg['orig_end_ms']
 
-    merged.append(current)
+    # Добавляем последний gap если есть
+    if current is not None:
+        merged.append(current)
 
-    safe_print(f"  ✨ Оптимизация: {len(segments)} → {len(merged)} сегментов (слито: {merge_count})")
+    gap_count = sum(1 for s in segments if s['type'] == 'gap')
+    merged_gap_count = sum(1 for s in merged if s['type'] == 'gap')
+    safe_print(f"  ✨ Сегментов: {len(merged)} (gap: {gap_count}→{merged_gap_count})")
 
-    return merged, subtitle_info
+    return merged
 
 
 def process_segment(args: tuple) -> Optional[Dict]:
@@ -463,72 +461,57 @@ def process_segment(args: tuple) -> Optional[Dict]:
             'output_duration_ms': output_duration_ms,
             'orig_start_ms': seg['orig_start_ms'],
             'orig_end_ms': seg['orig_end_ms'],
-            'speed': speed
+            'speed': speed,
+            'sub_index': seg.get('sub_index'),  # Прямая связь с субтитром
+            'rus_text': seg.get('rus_text', '')  # Текст для субтитров
         }
 
     safe_print(f"  ❌ Сег {idx}: файл пуст или не создан")
     return None
 
 
-def calculate_new_subtitle_times(results: List[Dict], subtitle_info: List[Dict]) -> List[Dict]:
+def calculate_new_subtitle_times(results: List[Dict]) -> List[Dict]:
     """
-    Пересчитывает тайминги субтитров для выходного видео.
+    Генерирует субтитры НАПРЯМУЮ из результатов рендеринга.
 
-    ВАЖНО: Используем РЕАЛЬНУЮ длительность сегментов (output_duration_ms),
-    а не теоретическую скорость. Это гарантирует соответствие субтитров видео.
+    Каждый сегмент с sub_index содержит всю информацию:
+    - output_duration_ms: реальная длительность после замедления
+    - rus_text: текст субтитра
+    - sub_index: номер субтитра
+
+    Никакого поиска по таймингам — прямая связь!
     """
+    # Сортируем по порядку в видео
+    sorted_results = sorted(results, key=lambda x: x['idx'])
 
-    # Строим временную карту с РЕАЛЬНЫМИ коэффициентами замедления
-    time_map = []
+    # Вычисляем позиции в выходном видео
     new_pos = 0
+    subtitle_positions = {}  # sub_index -> (new_start, new_end, text)
 
-    for r in sorted(results, key=lambda x: x['idx']):
-        orig_start = r['orig_start_ms']
-        orig_end = r['orig_end_ms']
-        orig_duration = orig_end - orig_start
+    for r in sorted_results:
         output_duration = r['output_duration_ms']
+        sub_index = r.get('sub_index')
 
-        # РЕАЛЬНЫЙ коэффициент замедления = выходная длительность / исходная
-        actual_speed = output_duration / orig_duration if orig_duration > 0 else 1.0
+        if sub_index is not None:
+            # Это сегмент с субтитром — запоминаем его позицию
+            subtitle_positions[sub_index] = {
+                'start_ms': new_pos,
+                'end_ms': new_pos + output_duration,
+                'text': r.get('rus_text', '')
+            }
 
-        time_map.append({
-            'orig_start': orig_start,
-            'orig_end': orig_end,
-            'new_start': new_pos,
-            'new_end': new_pos + output_duration,
-            'actual_speed': actual_speed
-        })
         new_pos += output_duration
 
-    # Пересчитываем позиции субтитров
+    # Формируем список субтитров
     new_subs = []
-
-    for sub in subtitle_info:
-        sub_orig_start = sub['orig_start_ms']
-        sub_orig_end = sub['orig_end_ms']
-        sub_orig_duration = sub_orig_end - sub_orig_start
-
-        # Ищем сегмент, содержащий начало субтитра
-        for tm in time_map:
-            if tm['orig_start'] <= sub_orig_start < tm['orig_end']:
-                # Смещение внутри сегмента (в исходном видео)
-                offset_in_segment = sub_orig_start - tm['orig_start']
-
-                # Масштабируем смещение по РЕАЛЬНОМУ замедлению сегмента
-                offset_new = int(offset_in_segment * tm['actual_speed'])
-                new_start = tm['new_start'] + offset_new
-
-                # Длительность субтитра масштабируется по РЕАЛЬНОМУ замедлению
-                new_duration = int(sub_orig_duration * tm['actual_speed'])
-                new_end = new_start + new_duration
-
-                new_subs.append({
-                    'index': sub['sub_index'],
-                    'start_ms': new_start,
-                    'end_ms': new_end,
-                    'text': sub['text']
-                })
-                break
+    for sub_index in sorted(subtitle_positions.keys()):
+        pos = subtitle_positions[sub_index]
+        new_subs.append({
+            'index': sub_index,
+            'start_ms': pos['start_ms'],
+            'end_ms': pos['end_ms'],
+            'text': pos['text']
+        })
 
     return new_subs
 
@@ -637,8 +620,8 @@ def main():
         norm_count = len(speeds) - slow_count - fast_count
         print(f"  📊 Замедлений: {slow_count} | Ускорений: {fast_count} | Без изменений: {norm_count}")
 
-    # Оптимизация (слияние)
-    merged_segments, subtitle_info = merge_segments(raw_segments)
+    # Оптимизация (слияние только gap-ов, субтитры остаются отдельными)
+    merged_segments = merge_segments(raw_segments)
 
     # Подготовка временной папки
     if temp_dir.exists():
@@ -689,9 +672,9 @@ def main():
     ]
     subprocess.run(cmd, capture_output=True)
 
-    # Генерация субтитров
+    # Генерация субтитров — напрямую из результатов рендеринга
     print("✍️ Генерация субтитров...")
-    new_subs = calculate_new_subtitle_times(results, subtitle_info)
+    new_subs = calculate_new_subtitle_times(results)
 
     srt_blocks = []
     for s in sorted(new_subs, key=lambda x: x['index']):
