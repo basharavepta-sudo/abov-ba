@@ -32,6 +32,8 @@ from typing import List, Dict, Tuple, Optional, Any
 # --- CONFIGURATION ---
 TARGET_CPS = 17.0           # Target CPS (below 18 for Aegisub safety margin)
 MAX_CPS = 18.0              # Aegisub limit - we stay below this
+TARGET_WPS = 2.5            # Target Words Per Second (comfortable speaking rate)
+MAX_WPS = 3.0               # Max WPS before slowdown (normal speech ~2.5-3 WPS)
 MIN_SPEED = 0.4             # Минимальная скорость (макс. замедление 2.5x)
 MAX_SPEED = 2.0             # Максимальная скорость (макс. ускорение 2x)
 MERGE_THRESHOLD = 0.02      # Порог для слияния сегментов (разница скоростей)
@@ -187,46 +189,62 @@ def detect_gpu_encoder() -> Tuple[str, List[str], str]:
     return 'libx264', ['-preset', 'fast', '-crf', '20'], 'CPU 🐢'
 
 
+def count_words(text: str) -> int:
+    """Считает количество слов в тексте."""
+    # Разбиваем по пробелам и пунктуации
+    words = re.findall(r'\b\w+\b', text, re.UNICODE)
+    return len(words)
+
+
 def calculate_speed(orig_text: str, trans_text: str, duration_ms: int = 0) -> float:
     """
-    Вычисляет коэффициент скорости на основе CPS (Characters Per Second).
+    Вычисляет коэффициент скорости на основе CPS и WPS.
 
-    CPS MODE (recommended for dubbing):
-    - Calculates current CPS = chars / duration
-    - If current CPS > TARGET_CPS, video needs to slow down
-    - Required duration = chars / TARGET_CPS
-    - Speed = required_duration / original_duration
+    Учитывает ОБА фактора:
+    - CPS (Characters Per Second) - для Aegisub лимита
+    - WPS (Words Per Second) - для комфортного проговаривания
 
-    LEGACY MODE (ratio-based):
-    - Simple ratio of translated/original text length
+    Если любой из параметров превышен - замедляем видео.
     """
     trans_text = trans_text.strip()
     trans_len = len(trans_text)
+    word_count = count_words(trans_text)
 
-    if trans_len == 0:
+    if trans_len == 0 or word_count == 0:
         return 1.0
 
     if CPS_MODE and duration_ms > 0:
-        # CPS-based calculation
         duration_sec = duration_ms / 1000.0
 
-        # Current CPS with translated text
+        # Current metrics
         current_cps = trans_len / duration_sec if duration_sec > 0 else TARGET_CPS
+        current_wps = word_count / duration_sec if duration_sec > 0 else TARGET_WPS
 
-        if current_cps < MAX_CPS:
-            # Already below Aegisub limit, no change needed
+        # Check if we need to slow down (either CPS or WPS exceeded)
+        need_slowdown_cps = current_cps > MAX_CPS
+        need_slowdown_wps = current_wps > MAX_WPS
+
+        if not need_slowdown_cps and not need_slowdown_wps:
+            # Already within limits, no change needed
             return 1.0
 
-        # Calculate required duration for TARGET_CPS (17, giving margin below 18)
-        required_duration = trans_len / TARGET_CPS
+        # Calculate required duration for both metrics
+        required_duration_cps = trans_len / TARGET_CPS
+        required_duration_wps = word_count / TARGET_WPS
 
-        # Speed factor (>1 = slow down, <1 = speed up)
+        # Use the LONGER required duration (slower speed = more time)
+        # This ensures BOTH CPS and WPS are satisfied
+        required_duration = max(required_duration_cps, required_duration_wps)
+
+        # Speed factor (>1 = slow down = video plays longer)
         speed = required_duration / duration_sec
 
-        # Calculate resulting CPS for logging
+        # Calculate resulting metrics for logging
         result_cps = trans_len / required_duration
+        result_wps = word_count / required_duration
 
-        safe_print(f"    CPS: {current_cps:.1f} → {result_cps:.1f} | Speed: {speed:.2f}x | \"{trans_text[:30]}...\"")
+        reason = "CPS" if required_duration_cps >= required_duration_wps else "WPS"
+        safe_print(f"    {reason}: CPS {current_cps:.1f}→{result_cps:.1f} | WPS {current_wps:.1f}→{result_wps:.1f} | Speed: {speed:.2f}x | \"{trans_text[:25]}...\"")
 
         return max(MIN_SPEED, min(MAX_SPEED, speed))
 
@@ -528,9 +546,10 @@ def main():
     temp_dir = output_dir / 'temp_segments'
 
     print("\n" + "=" * 65)
-    print("  🎬 VIDEO SPEED ADJUSTER v4.0 (CPS-Based)")
+    print("  🎬 VIDEO SPEED ADJUSTER v4.1 (CPS + WPS Based)")
     print("=" * 65)
-    print(f"  📊 Target CPS: {TARGET_CPS} (always below {MAX_CPS} for Aegisub)")
+    print(f"  📊 Target CPS: {TARGET_CPS} (max {MAX_CPS} for Aegisub)")
+    print(f"  🗣️ Target WPS: {TARGET_WPS} (max {MAX_WPS} words/sec)")
     print(f"  ⚡ Speed range: {MIN_SPEED}x - {MAX_SPEED}x")
     print(f"  📂 Output dir: {output_dir}")
     print("=" * 65)
@@ -672,10 +691,12 @@ def main():
     # Итоговая информация
     total_output_ms = sum(r['output_duration_ms'] for r in results)
 
-    # Calculate final CPS stats
+    # Calculate final CPS and WPS stats
     total_chars = sum(len(s['text']) for s in new_subs)
+    total_words = sum(count_words(s['text']) for s in new_subs)
     final_total_duration = total_output_ms / 1000.0
     avg_cps = total_chars / final_total_duration if final_total_duration > 0 else 0
+    avg_wps = total_words / final_total_duration if final_total_duration > 0 else 0
 
     print(f"\n{'='*65}")
     print(f"✅ Готово!")
@@ -684,6 +705,7 @@ def main():
     print(f"   ⏱️ Исходная длительность: {ms_to_time(duration_ms)}")
     print(f"   ⏱️ Новая длительность: {ms_to_time(total_output_ms)}")
     print(f"   📊 Средний CPS: {avg_cps:.1f} (цель: {TARGET_CPS})")
+    print(f"   🗣️ Средний WPS: {avg_wps:.1f} (цель: {TARGET_WPS})")
     print(f"{'='*65}\n")
 
 
