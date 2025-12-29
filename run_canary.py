@@ -9,6 +9,7 @@ import os
 import subprocess
 import warnings
 import tempfile
+import argparse
 from pathlib import Path
 
 # === TEMP FIX ===
@@ -299,9 +300,14 @@ def fix_timings(subtitles, min_gap=0.08, min_duration=1.0):
 
 
 def main():
-    # ===== SETTINGS =====
-    INPUT_FILE = "input.mp3"
-    OUTPUT_FILE = "output.srt"
+    parser = argparse.ArgumentParser(description="Parakeet TDT Transcription")
+    parser.add_argument("--input", "-i", type=str, default="input.mp3", help="Input audio file")
+    parser.add_argument("--output", "-o", type=str, default="output.srt", help="Output SRT file")
+    args = parser.parse_args()
+
+    # === SETTINGS ===
+    INPUT_FILE = args.input
+    OUTPUT_FILE = args.output
     CHUNK_SECONDS = 25
     OVERLAP_SECONDS = 2
     MIN_SUBTITLE_DURATION = 1.2  # Минимум секунд на субтитр

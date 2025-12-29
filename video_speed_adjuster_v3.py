@@ -24,6 +24,7 @@ import subprocess
 import os
 import shutil
 import time
+import argparse
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import threading
@@ -481,15 +482,30 @@ def read_file_safe(path: Path) -> Optional[str]:
 
 
 def main():
-    script_dir = Path(__file__).parent.resolve()
+    parser = argparse.ArgumentParser(description="Video Speed Adjuster v3.0")
+    parser.add_argument("--input_video", "-v", type=str, default="input.mp4", help="Input video file")
+    parser.add_argument("--eng_srt", "-e", type=str, default="output.srt", help="English subtitles (original timings)")
+    parser.add_argument("--trans_file", "-t", type=str, default="Penis.txt", help="Translation file (numbered text or SRT)")
+    parser.add_argument("--output_video", "-ov", type=str, default="output_adjusted.mp4", help="Output video file")
+    parser.add_argument("--output_srt", "-os", type=str, default="adjusted.srt", help="Output SRT file")
+    args = parser.parse_args()
 
-    input_video = script_dir / 'input.mp4'
-    eng_srt_file = script_dir / 'output.srt'
-    rus_srt_file = script_dir / 'russian.srt'
-    rus_txt_file = script_dir / 'Penis.txt'
-    output_video = script_dir / 'output_adjusted.mp4'
-    output_srt = script_dir / 'adjusted.srt'
-    temp_dir = script_dir / 'temp_segments'
+    # script_dir = Path(__file__).parent.resolve()
+
+    input_video = Path(args.input_video).resolve()
+    eng_srt_file = Path(args.eng_srt).resolve()
+    trans_file = Path(args.trans_file).resolve()
+
+    # Optional legacy fallback if default name not found and not specified explicitly
+    # But for cleaner design, we'll stick to what argparse gave us or fail.
+    # Actually, to support "russian.srt" fallback if "Penis.txt" is missing and user didn't specify:
+    if args.trans_file == "Penis.txt" and not trans_file.exists():
+         if Path("russian.srt").exists():
+             trans_file = Path("russian.srt").resolve()
+
+    output_video = Path(args.output_video).resolve()
+    output_srt = Path(args.output_srt).resolve()
+    temp_dir = input_video.parent / 'temp_segments'
 
     print("\n" + "=" * 65)
     print("  🎬 VIDEO SPEED ADJUSTER v3.0 (No Duplicate Frames)")
@@ -497,33 +513,33 @@ def main():
 
     # Проверка входного видео
     if not input_video.exists():
-        print(f"❌ Не найден: input.mp4")
+        print(f"❌ Не найден: {input_video}")
         sys.exit(1)
 
     if not eng_srt_file.exists():
-        print(f"❌ Не найден: output.srt (английские субтитры)")
+        print(f"❌ Не найден: {eng_srt_file}")
         sys.exit(1)
 
-    # Ищем русские субтитры (SRT или TXT)
+    # Ищем перевод (SRT или TXT)
     rus_content = None
     rus_is_srt = False
 
-    if rus_srt_file.exists():
-        rus_content = read_file_safe(rus_srt_file)
-        rus_is_srt = True
-        print(f"📄 Русские субтитры: russian.srt")
-    elif rus_txt_file.exists():
-        rus_content = read_file_safe(rus_txt_file)
-        rus_is_srt = False
-        print(f"📄 Русский текст: Penis.txt")
+    if trans_file.exists():
+        rus_content = read_file_safe(trans_file)
+        if trans_file.suffix.lower() == '.srt':
+            rus_is_srt = True
+            print(f"📄 Русские субтитры: {trans_file.name}")
+        else:
+            rus_is_srt = False
+            print(f"📄 Русский текст: {trans_file.name}")
     else:
-        print(f"❌ Не найден: russian.srt или Penis.txt")
+        print(f"❌ Не найден файл перевода: {trans_file}")
         sys.exit(1)
 
     # Читаем английские субтитры
     eng_content = read_file_safe(eng_srt_file)
     if not eng_content:
-        print("❌ Не удалось прочитать output.srt")
+        print(f"❌ Не удалось прочитать {eng_srt_file}")
         sys.exit(1)
 
     eng_subs = parse_srt(eng_content)

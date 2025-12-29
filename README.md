@@ -15,60 +15,43 @@ A beautiful GUI application for video subtitle processing, including AI-powered 
 ```bash
 python gui.py
 ```
+The GUI allows you to select input files and run the processing steps.
 
 ### Or use the console menu
 ```bash
 python menu.py
 ```
-
-## Building Standalone Executable
-
-### Prerequisites
-```bash
-pip install pyinstaller
-```
-
-### Build
-```bash
-python build.py
-```
-
-The executable will be created in the `dist/` folder.
-
-### Build Options
-```bash
-python build.py          # Standard build (lightweight)
-python build.py --full   # Include all ML dependencies (large!)
-python build.py --clean  # Clean build artifacts
-```
+The console menu expects files to be in the same directory (`input.mp3`, `input.mp4`, etc.) for quick processing.
 
 ## Workflow
 
-1. **Prepare files:**
-   - `input.mp3` - Audio to transcribe
-   - `input.mp4` - Video to adjust (optional)
+1. **Transcription**
+   - Select your audio file (`.mp3`, `.wav`)
+   - It will produce `output.srt` with English subtitles
 
-2. **Transcribe** (Option 1)
-   - Creates `output.srt` with English subtitles
+2. **Export to Text**
+   - Convert the `output.srt` to `output.txt`
+   - This creates a numbered list suitable for translation
 
-3. **Export to Text** (Option 2)
-   - Creates `output.txt` - numbered list for translation
-
-4. **Translate**
+3. **Translate**
    - Send `output.txt` to ChatGPT/Claude for translation
-   - Save result as `Penis.txt` (keep numbered format)
+   - Save the result as a text file (e.g., `Penis.txt`), keeping the numbered format
 
-5. **Merge Translation** (Option 3)
-   - Combines timings + translation → `result.srt`
+4. **Merge Translation**
+   - Combine the original timings from `output.srt` with your translated text file
+   - Produces a `result.srt` with translated subtitles
 
-6. **Adjust Video** (Option 4)
-   - Creates `output_adjusted.mp4` with speed adjustments
+5. **Adjust Video**
+   - Select your video file (`.mp4`)
+   - The tool will adjust the video speed to match the length of the translated subtitles
+   - Creates `output_adjusted.mp4`
 
 ## Requirements
 
 ### For GUI and basic processing:
 - Python 3.8+
 - ffmpeg (for video processing)
+- tkinter (usually included with Python)
 
 ### For AI transcription:
 - NVIDIA GPU with CUDA
@@ -84,8 +67,6 @@ python build.py --clean  # Clean build artifacts
 ├── srt.py                    # SRT to text converter
 ├── text_to_srt.py            # Merge translation with timings
 ├── video_speed_adjuster_v3.py # Video speed adjustment
-├── build.py                  # Build script for executable
-├── build.spec                # PyInstaller configuration
 ├── requirements.txt          # Basic dependencies
 └── requirements-full.txt     # Full dependencies with ASR
 ```
