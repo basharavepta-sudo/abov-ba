@@ -30,10 +30,11 @@ import threading
 from typing import List, Dict, Tuple, Optional, Any
 
 # --- CONFIGURATION ---
-SPEED_TOLERANCE = 0.08      # ±8% считается 1.0x (не трогаем)
-MIN_SPEED = 0.6             # Минимальная скорость (макс. замедление)
-MAX_SPEED = 1.5             # Максимальная скорость (макс. ускорение)
+TARGET_CPS = 18.0           # Target Characters Per Second (Aegisub standard)
+MIN_SPEED = 0.4             # Минимальная скорость (макс. замедление 2.5x)
+MAX_SPEED = 2.0             # Максимальная скорость (макс. ускорение 2x)
 MERGE_THRESHOLD = 0.02      # Порог для слияния сегментов (разница скоростей)
+CPS_MODE = True             # Use CPS-based calculation (more accurate for dubbing)
 
 print_lock = threading.Lock()
 
@@ -185,29 +186,54 @@ def detect_gpu_encoder() -> Tuple[str, List[str], str]:
     return 'libx264', ['-preset', 'fast', '-crf', '20'], 'CPU 🐢'
 
 
-def calculate_speed(orig_text: str, trans_text: str) -> float:
+def calculate_speed(orig_text: str, trans_text: str, duration_ms: int = 0) -> float:
     """
-    Вычисляет коэффициент скорости.
+    Вычисляет коэффициент скорости на основе CPS (Characters Per Second).
 
-    Логика:
-    - Если русский текст длиннее → speed > 1 → видео замедляется
-    - Если русский текст короче → speed < 1 → видео ускоряется
-    - setpts = speed * PTS (speed > 1 = замедление)
+    CPS MODE (recommended for dubbing):
+    - Calculates current CPS = chars / duration
+    - If current CPS > TARGET_CPS, video needs to slow down
+    - Required duration = chars / TARGET_CPS
+    - Speed = required_duration / original_duration
+
+    LEGACY MODE (ratio-based):
+    - Simple ratio of translated/original text length
     """
-    orig_len = len(orig_text.strip())
-    trans_len = len(trans_text.strip())
+    trans_text = trans_text.strip()
+    trans_len = len(trans_text)
 
-    if orig_len == 0:
+    if trans_len == 0:
         return 1.0
 
-    ratio = trans_len / orig_len
+    if CPS_MODE and duration_ms > 0:
+        # CPS-based calculation
+        duration_sec = duration_ms / 1000.0
 
-    # Применяем толерантность
-    if (1.0 - SPEED_TOLERANCE) <= ratio <= (1.0 + SPEED_TOLERANCE):
-        return 1.0
+        # Current CPS with translated text
+        current_cps = trans_len / duration_sec if duration_sec > 0 else TARGET_CPS
 
-    # Ограничиваем диапазон
-    return max(MIN_SPEED, min(MAX_SPEED, ratio))
+        if current_cps <= TARGET_CPS:
+            # Already within acceptable CPS, no change needed
+            return 1.0
+
+        # Calculate required duration for TARGET_CPS
+        required_duration = trans_len / TARGET_CPS
+
+        # Speed factor (>1 = slow down, <1 = speed up)
+        speed = required_duration / duration_sec
+
+        safe_print(f"    CPS: {current_cps:.1f} → {TARGET_CPS:.1f} | Speed: {speed:.2f}x | \"{trans_text[:30]}...\"")
+
+        return max(MIN_SPEED, min(MAX_SPEED, speed))
+
+    else:
+        # Legacy ratio-based calculation
+        orig_len = len(orig_text.strip())
+        if orig_len == 0:
+            return 1.0
+
+        ratio = trans_len / orig_len
+        return max(MIN_SPEED, min(MAX_SPEED, ratio))
 
 
 def build_segments(eng_subs: List[Dict], rus_texts: List[str], video_duration_ms: int) -> List[Dict]:
@@ -250,8 +276,9 @@ def build_segments(eng_subs: List[Dict], rus_texts: List[str], video_duration_ms
             if orig_start >= orig_end:
                 continue  # Пропускаем полностью перекрытый субтитр
 
-        # Вычисляем скорость
-        speed = calculate_speed(eng_text, rus_text)
+        # Вычисляем скорость на основе CPS
+        duration_ms = orig_end - orig_start
+        speed = calculate_speed(eng_text, rus_text, duration_ms)
 
         segments.append({
             'type': 'subtitle',
@@ -492,7 +519,10 @@ def main():
     temp_dir = script_dir / 'temp_segments'
 
     print("\n" + "=" * 65)
-    print("  🎬 VIDEO SPEED ADJUSTER v3.0 (No Duplicate Frames)")
+    print("  🎬 VIDEO SPEED ADJUSTER v4.0 (CPS-Based)")
+    print("=" * 65)
+    print(f"  📊 Target CPS: {TARGET_CPS} (Aegisub compatible)")
+    print(f"  ⚡ Speed range: {MIN_SPEED}x - {MAX_SPEED}x")
     print("=" * 65)
 
     # Проверка входного видео
@@ -631,12 +661,19 @@ def main():
 
     # Итоговая информация
     total_output_ms = sum(r['output_duration_ms'] for r in results)
+
+    # Calculate final CPS stats
+    total_chars = sum(len(s['text']) for s in new_subs)
+    final_total_duration = total_output_ms / 1000.0
+    avg_cps = total_chars / final_total_duration if final_total_duration > 0 else 0
+
     print(f"\n{'='*65}")
     print(f"✅ Готово!")
     print(f"   📁 Видео: {output_video.name}")
     print(f"   📁 Субтитры: {output_srt.name}")
     print(f"   ⏱️ Исходная длительность: {ms_to_time(duration_ms)}")
     print(f"   ⏱️ Новая длительность: {ms_to_time(total_output_ms)}")
+    print(f"   📊 Средний CPS: {avg_cps:.1f} (цель: {TARGET_CPS})")
     print(f"{'='*65}\n")
 
 
