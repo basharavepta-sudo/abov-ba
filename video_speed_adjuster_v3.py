@@ -30,10 +30,10 @@ import threading
 from typing import List, Dict, Tuple, Optional, Any
 
 # --- CONFIGURATION ---
-TARGET_CPS = 17.0           # Target CPS (below 18 for Aegisub safety margin)
-MAX_CPS = 18.0              # Aegisub limit - we stay below this
-TARGET_WPS = 2.5            # Target Words Per Second (comfortable speaking rate)
-MAX_WPS = 3.0               # Max WPS before slowdown (normal speech ~2.5-3 WPS)
+TARGET_CPS = 15.0           # Target CPS (comfortable reading speed)
+MAX_CPS = 16.0              # Trigger slowdown above this
+TARGET_WPS = 2.0            # Target Words Per Second (slow, clear speech)
+MAX_WPS = 2.3               # Max WPS before slowdown (aggressive threshold)
 MIN_SPEED = 0.4             # Минимальная скорость (макс. замедление 2.5x)
 MAX_SPEED = 2.0             # Максимальная скорость (макс. ускорение 2x)
 MERGE_THRESHOLD = 0.02      # Порог для слияния сегментов (разница скоростей)
