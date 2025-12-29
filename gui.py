@@ -3,7 +3,7 @@
 Video Subtitle Processing Toolkit - Modern GUI
 ===============================================
 
-A beautiful graphical interface for subtitle and video processing.
+A beautiful graphical interface inspired by UVR5 design.
 """
 
 import os
@@ -14,323 +14,344 @@ import queue
 from pathlib import Path
 from datetime import datetime
 import tkinter as tk
-from tkinter import ttk, filedialog, messagebox, scrolledtext
+from tkinter import ttk, filedialog, messagebox
 
 # Detect if running as PyInstaller bundle
 if getattr(sys, 'frozen', False):
-    # Running as compiled executable
-    BUNDLE_DIR = Path(sys._MEIPASS)  # Temp dir with bundled files
-    SCRIPT_DIR = Path(sys.executable).parent.resolve()  # Dir containing .exe
+    BUNDLE_DIR = Path(sys._MEIPASS)
+    SCRIPT_DIR = Path(sys.executable).parent.resolve()
     IS_FROZEN = True
 else:
-    # Running as normal Python script
     BUNDLE_DIR = Path(__file__).parent.resolve()
     SCRIPT_DIR = BUNDLE_DIR
     IS_FROZEN = False
 
 
-class ModernStyle:
-    """Modern dark theme colors and fonts."""
+class Theme:
+    """Modern dark theme with teal accents (UVR5 style)."""
 
-    # Colors
-    BG_DARK = "#1a1a2e"
-    BG_CARD = "#16213e"
-    BG_INPUT = "#0f3460"
-    ACCENT = "#e94560"
-    ACCENT_HOVER = "#ff6b6b"
-    SUCCESS = "#00d26a"
-    WARNING = "#ffc107"
-    ERROR = "#ff4757"
-    TEXT = "#eaeaea"
-    TEXT_DIM = "#8892b0"
-    BORDER = "#233554"
+    # Main colors
+    BG_DARK = "#0d1117"
+    BG_SECONDARY = "#161b22"
+    BG_CARD = "#1c2128"
+    BG_INPUT = "#0d1117"
+    BG_BUTTON = "#21262d"
+
+    # Accent colors
+    ACCENT = "#00d4aa"
+    ACCENT_DARK = "#00a080"
+    ACCENT_GLOW = "#00ffcc"
+
+    # Text colors
+    TEXT = "#e6edf3"
+    TEXT_DIM = "#7d8590"
+    TEXT_LABEL = "#8b949e"
+
+    # Status colors
+    SUCCESS = "#3fb950"
+    WARNING = "#d29922"
+    ERROR = "#f85149"
 
     # Fonts
-    FONT_TITLE = ("Segoe UI", 24, "bold")
-    FONT_HEADING = ("Segoe UI", 14, "bold")
-    FONT_NORMAL = ("Segoe UI", 11)
-    FONT_SMALL = ("Segoe UI", 10)
-    FONT_MONO = ("Consolas", 10)
+    FONT_LOGO = ("Segoe UI", 28, "bold")
+    FONT_SUBTITLE = ("Segoe UI", 10)
+    FONT_LABEL = ("Segoe UI", 9)
+    FONT_NORMAL = ("Segoe UI", 10)
+    FONT_BUTTON = ("Segoe UI", 11, "bold")
+    FONT_SMALL = ("Segoe UI", 9)
+    FONT_MONO = ("Consolas", 9)
 
 
-class FileStatusPanel(tk.Frame):
-    """Panel showing file status with icons."""
+class StyledButton(tk.Canvas):
+    """Modern styled button with hover effects."""
 
-    FILES = [
-        ("input.mp3", "Audio input", "transcribe"),
-        ("input.mp4", "Video input", "video"),
-        ("output.srt", "English subtitles", "result"),
-        ("output.txt", "Text for translation", "result"),
-        ("Penis.txt", "Translated text", "translate"),
-        ("russian.srt", "Russian subtitles", "translate"),
-        ("result.srt", "Merged subtitles", "result"),
-        ("output_adjusted.mp4", "Adjusted video", "final"),
-        ("adjusted.srt", "Adjusted subtitles", "final"),
-    ]
+    def __init__(self, parent, text, command=None, width=140, height=36,
+                 accent=False, icon=None):
+        super().__init__(parent, width=width, height=height,
+                        bg=Theme.BG_SECONDARY, highlightthickness=0)
 
-    def __init__(self, parent):
-        super().__init__(parent, bg=ModernStyle.BG_CARD)
-        self.labels = {}
-        self.create_widgets()
-
-    def create_widgets(self):
-        # Header
-        header = tk.Label(
-            self, text="FILES",
-            font=ModernStyle.FONT_HEADING,
-            fg=ModernStyle.TEXT,
-            bg=ModernStyle.BG_CARD
-        )
-        header.pack(pady=(15, 10), padx=15, anchor="w")
-
-        # File list
-        for filename, description, category in self.FILES:
-            frame = tk.Frame(self, bg=ModernStyle.BG_CARD)
-            frame.pack(fill="x", padx=15, pady=3)
-
-            # Status indicator
-            status_label = tk.Label(
-                frame, text="●",
-                font=("Segoe UI", 12),
-                fg=ModernStyle.TEXT_DIM,
-                bg=ModernStyle.BG_CARD,
-                width=2
-            )
-            status_label.pack(side="left")
-
-            # Filename
-            name_label = tk.Label(
-                frame, text=filename,
-                font=ModernStyle.FONT_SMALL,
-                fg=ModernStyle.TEXT,
-                bg=ModernStyle.BG_CARD,
-                width=22,
-                anchor="w"
-            )
-            name_label.pack(side="left")
-
-            # Size/status
-            size_label = tk.Label(
-                frame, text="--",
-                font=ModernStyle.FONT_SMALL,
-                fg=ModernStyle.TEXT_DIM,
-                bg=ModernStyle.BG_CARD,
-                width=12,
-                anchor="e"
-            )
-            size_label.pack(side="right")
-
-            self.labels[filename] = (status_label, size_label)
-
-        # Padding at bottom
-        tk.Frame(self, height=15, bg=ModernStyle.BG_CARD).pack()
-
-    def refresh(self):
-        """Update file status."""
-        for filename, (status_label, size_label) in self.labels.items():
-            path = SCRIPT_DIR / filename
-            if path.exists():
-                size = path.stat().st_size
-                if size > 1024 * 1024:
-                    size_str = f"{size / 1024 / 1024:.1f} MB"
-                elif size > 1024:
-                    size_str = f"{size / 1024:.1f} KB"
-                else:
-                    size_str = f"{size} B"
-
-                status_label.config(fg=ModernStyle.SUCCESS)
-                size_label.config(text=size_str, fg=ModernStyle.SUCCESS)
-            else:
-                status_label.config(fg=ModernStyle.TEXT_DIM)
-                size_label.config(text="missing", fg=ModernStyle.TEXT_DIM)
-
-
-class ActionButton(tk.Canvas):
-    """Modern styled button."""
-
-    def __init__(self, parent, text, command, color=None, width=200, height=45):
-        super().__init__(
-            parent,
-            width=width,
-            height=height,
-            bg=ModernStyle.BG_DARK,
-            highlightthickness=0
-        )
-
-        self.command = command
         self.text = text
+        self.command = command
         self.width = width
         self.height = height
-        self.color = color or ModernStyle.ACCENT
-        self.hover_color = ModernStyle.ACCENT_HOVER
-        self.is_hovered = False
-        self.is_disabled = False
+        self.accent = accent
+        self.icon = icon
+        self.hovered = False
+        self.disabled = False
 
-        self.draw()
+        self.bind("<Enter>", self._on_enter)
+        self.bind("<Leave>", self._on_leave)
+        self.bind("<Button-1>", self._on_click)
 
-        self.bind("<Enter>", self.on_enter)
-        self.bind("<Leave>", self.on_leave)
-        self.bind("<Button-1>", self.on_click)
+        self._draw()
 
-    def draw(self):
+    def _draw(self):
         self.delete("all")
 
-        if self.is_disabled:
-            fill = ModernStyle.BG_INPUT
-            text_color = ModernStyle.TEXT_DIM
+        if self.disabled:
+            bg = Theme.BG_CARD
+            fg = Theme.TEXT_DIM
+            border = Theme.BG_CARD
+        elif self.accent:
+            bg = Theme.ACCENT if not self.hovered else Theme.ACCENT_GLOW
+            fg = Theme.BG_DARK
+            border = bg
         else:
-            fill = self.hover_color if self.is_hovered else self.color
-            text_color = ModernStyle.TEXT
+            bg = Theme.BG_BUTTON if not self.hovered else "#30363d"
+            fg = Theme.TEXT
+            border = "#30363d" if not self.hovered else Theme.ACCENT
 
-        # Rounded rectangle
-        r = 8
-        self.create_arc(0, 0, r*2, r*2, start=90, extent=90, fill=fill, outline="")
-        self.create_arc(self.width-r*2, 0, self.width, r*2, start=0, extent=90, fill=fill, outline="")
-        self.create_arc(0, self.height-r*2, r*2, self.height, start=180, extent=90, fill=fill, outline="")
-        self.create_arc(self.width-r*2, self.height-r*2, self.width, self.height, start=270, extent=90, fill=fill, outline="")
-        self.create_rectangle(r, 0, self.width-r, self.height, fill=fill, outline="")
-        self.create_rectangle(0, r, self.width, self.height-r, fill=fill, outline="")
+        # Draw rounded rectangle
+        r = 6
+        self.create_rounded_rect(2, 2, self.width-2, self.height-2, r, bg, border)
 
-        # Text
-        self.create_text(
-            self.width // 2, self.height // 2,
-            text=self.text,
-            font=ModernStyle.FONT_NORMAL,
-            fill=text_color
-        )
+        # Draw text
+        self.create_text(self.width//2, self.height//2, text=self.text,
+                        font=Theme.FONT_NORMAL, fill=fg)
 
-    def on_enter(self, event):
-        if not self.is_disabled:
-            self.is_hovered = True
-            self.draw()
+    def create_rounded_rect(self, x1, y1, x2, y2, r, fill, outline):
+        """Draw a rounded rectangle."""
+        self.create_arc(x1, y1, x1+2*r, y1+2*r, start=90, extent=90, fill=fill, outline=outline)
+        self.create_arc(x2-2*r, y1, x2, y1+2*r, start=0, extent=90, fill=fill, outline=outline)
+        self.create_arc(x1, y2-2*r, x1+2*r, y2, start=180, extent=90, fill=fill, outline=outline)
+        self.create_arc(x2-2*r, y2-2*r, x2, y2, start=270, extent=90, fill=fill, outline=outline)
+        self.create_rectangle(x1+r, y1, x2-r, y2, fill=fill, outline="")
+        self.create_rectangle(x1, y1+r, x2, y2-r, fill=fill, outline="")
+        self.create_line(x1+r, y1, x2-r, y1, fill=outline)
+        self.create_line(x1+r, y2, x2-r, y2, fill=outline)
+        self.create_line(x1, y1+r, x1, y2-r, fill=outline)
+        self.create_line(x2, y1+r, x2, y2-r, fill=outline)
 
-    def on_leave(self, event):
-        self.is_hovered = False
-        self.draw()
+    def _on_enter(self, e):
+        if not self.disabled:
+            self.hovered = True
+            self._draw()
 
-    def on_click(self, event):
-        if not self.is_disabled and self.command:
+    def _on_leave(self, e):
+        self.hovered = False
+        self._draw()
+
+    def _on_click(self, e):
+        if not self.disabled and self.command:
             self.command()
 
     def set_disabled(self, disabled):
-        self.is_disabled = disabled
-        self.draw()
+        self.disabled = disabled
+        self._draw()
 
 
-class LogPanel(tk.Frame):
-    """Log output panel with auto-scroll."""
+class FileSelector(tk.Frame):
+    """File/folder selector with button and entry."""
 
-    def __init__(self, parent):
-        super().__init__(parent, bg=ModernStyle.BG_CARD)
-        self.create_widgets()
+    def __init__(self, parent, label, is_folder=False, file_types=None):
+        super().__init__(parent, bg=Theme.BG_SECONDARY)
 
-    def create_widgets(self):
-        # Header
-        header_frame = tk.Frame(self, bg=ModernStyle.BG_CARD)
-        header_frame.pack(fill="x", padx=15, pady=(15, 5))
+        self.is_folder = is_folder
+        self.file_types = file_types or [("All files", "*.*")]
+        self.path_var = tk.StringVar()
 
-        tk.Label(
-            header_frame, text="LOG OUTPUT",
-            font=ModernStyle.FONT_HEADING,
-            fg=ModernStyle.TEXT,
-            bg=ModernStyle.BG_CARD
-        ).pack(side="left")
+        # Button
+        self.btn = StyledButton(self, label, self._browse, width=120)
+        self.btn.pack(side="left", padx=(0, 10))
 
-        clear_btn = tk.Label(
-            header_frame, text="Clear",
-            font=ModernStyle.FONT_SMALL,
-            fg=ModernStyle.ACCENT,
-            bg=ModernStyle.BG_CARD,
+        # Entry
+        self.entry = tk.Entry(
+            self, textvariable=self.path_var,
+            font=Theme.FONT_NORMAL,
+            bg=Theme.BG_INPUT,
+            fg=Theme.TEXT,
+            insertbackground=Theme.TEXT,
+            relief="flat",
+            highlightthickness=1,
+            highlightbackground=Theme.BG_CARD,
+            highlightcolor=Theme.ACCENT
+        )
+        self.entry.pack(side="left", fill="x", expand=True, ipady=8)
+
+        # Browse icon button
+        self.icon_btn = tk.Label(
+            self, text="📁", font=("Segoe UI", 14),
+            bg=Theme.BG_SECONDARY, fg=Theme.TEXT_DIM,
             cursor="hand2"
         )
-        clear_btn.pack(side="right")
-        clear_btn.bind("<Button-1>", lambda e: self.clear())
+        self.icon_btn.pack(side="right", padx=(10, 0))
+        self.icon_btn.bind("<Button-1>", lambda e: self._browse())
 
-        # Text area
-        self.text = scrolledtext.ScrolledText(
-            self,
-            font=ModernStyle.FONT_MONO,
-            bg=ModernStyle.BG_INPUT,
-            fg=ModernStyle.TEXT,
-            insertbackground=ModernStyle.TEXT,
-            relief="flat",
-            padx=10,
-            pady=10,
-            height=12
+    def _browse(self):
+        if self.is_folder:
+            path = filedialog.askdirectory(initialdir=SCRIPT_DIR)
+        else:
+            path = filedialog.askopenfilename(
+                initialdir=SCRIPT_DIR,
+                filetypes=self.file_types
+            )
+        if path:
+            self.path_var.set(path)
+
+    def get(self):
+        return self.path_var.get()
+
+    def set(self, value):
+        self.path_var.set(value)
+
+
+class LabeledDropdown(tk.Frame):
+    """Dropdown with label above."""
+
+    def __init__(self, parent, label, values, default=None):
+        super().__init__(parent, bg=Theme.BG_SECONDARY)
+
+        # Label
+        tk.Label(
+            self, text=label,
+            font=Theme.FONT_LABEL,
+            fg=Theme.TEXT_LABEL,
+            bg=Theme.BG_SECONDARY
+        ).pack(anchor="w", pady=(0, 5))
+
+        # Combobox
+        self.var = tk.StringVar(value=default or (values[0] if values else ""))
+
+        style = ttk.Style()
+        style.configure("Custom.TCombobox",
+                       fieldbackground=Theme.BG_INPUT,
+                       background=Theme.BG_BUTTON,
+                       foreground=Theme.TEXT)
+
+        self.combo = ttk.Combobox(
+            self, textvariable=self.var,
+            values=values,
+            state="readonly",
+            font=Theme.FONT_NORMAL,
+            width=20
         )
-        self.text.pack(fill="both", expand=True, padx=15, pady=(5, 15))
+        self.combo.pack(fill="x")
 
-        # Configure tags for colored output
-        self.text.tag_config("error", foreground=ModernStyle.ERROR)
-        self.text.tag_config("success", foreground=ModernStyle.SUCCESS)
-        self.text.tag_config("warning", foreground=ModernStyle.WARNING)
-        self.text.tag_config("info", foreground=ModernStyle.TEXT_DIM)
+    def get(self):
+        return self.var.get()
+
+    def set(self, value):
+        self.var.set(value)
+
+
+class CheckOption(tk.Frame):
+    """Styled checkbox option."""
+
+    def __init__(self, parent, text, default=False):
+        super().__init__(parent, bg=Theme.BG_SECONDARY)
+
+        self.var = tk.BooleanVar(value=default)
+
+        self.check = tk.Checkbutton(
+            self, text=text,
+            variable=self.var,
+            font=Theme.FONT_NORMAL,
+            fg=Theme.TEXT,
+            bg=Theme.BG_SECONDARY,
+            activebackground=Theme.BG_SECONDARY,
+            activeforeground=Theme.TEXT,
+            selectcolor=Theme.BG_INPUT,
+            highlightthickness=0
+        )
+        self.check.pack(anchor="w")
+
+    def get(self):
+        return self.var.get()
+
+
+class StatusBar(tk.Frame):
+    """Bottom status bar with file indicators."""
+
+    FILES = [
+        ("input.mp3", "Audio"),
+        ("input.mp4", "Video"),
+        ("output.srt", "SRT"),
+        ("Penis.txt", "Translation"),
+    ]
+
+    def __init__(self, parent):
+        super().__init__(parent, bg=Theme.BG_DARK)
+
+        self.indicators = {}
+
+        for filename, label in self.FILES:
+            frame = tk.Frame(self, bg=Theme.BG_DARK)
+            frame.pack(side="left", padx=15)
+
+            dot = tk.Label(frame, text="●", font=("Segoe UI", 10),
+                          fg=Theme.TEXT_DIM, bg=Theme.BG_DARK)
+            dot.pack(side="left")
+
+            lbl = tk.Label(frame, text=label, font=Theme.FONT_SMALL,
+                          fg=Theme.TEXT_DIM, bg=Theme.BG_DARK)
+            lbl.pack(side="left", padx=(5, 0))
+
+            self.indicators[filename] = dot
+
+        # Version label on right
+        self.version = tk.Label(
+            self, text=f"Video Subtitle Toolkit v1.0 [{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}]",
+            font=Theme.FONT_SMALL,
+            fg=Theme.TEXT_DIM,
+            bg=Theme.BG_DARK
+        )
+        self.version.pack(side="right", padx=15)
+
+    def refresh(self):
+        for filename, dot in self.indicators.items():
+            if (SCRIPT_DIR / filename).exists():
+                dot.config(fg=Theme.SUCCESS)
+            else:
+                dot.config(fg=Theme.TEXT_DIM)
+
+
+class LogOutput(tk.Frame):
+    """Expandable log output panel."""
+
+    def __init__(self, parent):
+        super().__init__(parent, bg=Theme.BG_CARD)
+
+        # Header with toggle
+        header = tk.Frame(self, bg=Theme.BG_CARD)
+        header.pack(fill="x", padx=15, pady=10)
+
+        tk.Label(header, text="OUTPUT LOG", font=Theme.FONT_LABEL,
+                fg=Theme.TEXT_LABEL, bg=Theme.BG_CARD).pack(side="left")
+
+        self.clear_btn = tk.Label(header, text="Clear", font=Theme.FONT_SMALL,
+                                  fg=Theme.ACCENT, bg=Theme.BG_CARD, cursor="hand2")
+        self.clear_btn.pack(side="right")
+        self.clear_btn.bind("<Button-1>", lambda e: self.clear())
+
+        # Text widget
+        self.text = tk.Text(
+            self, font=Theme.FONT_MONO,
+            bg=Theme.BG_INPUT,
+            fg=Theme.TEXT,
+            insertbackground=Theme.TEXT,
+            relief="flat",
+            height=8,
+            padx=10,
+            pady=10
+        )
+        self.text.pack(fill="both", expand=True, padx=15, pady=(0, 15))
+
+        # Scrollbar
+        scrollbar = tk.Scrollbar(self.text, command=self.text.yview)
+        scrollbar.pack(side="right", fill="y")
+        self.text.config(yscrollcommand=scrollbar.set)
+
+        # Tags
+        self.text.tag_config("error", foreground=Theme.ERROR)
+        self.text.tag_config("success", foreground=Theme.SUCCESS)
+        self.text.tag_config("info", foreground=Theme.TEXT_DIM)
 
     def log(self, message, tag=None):
-        """Add message to log."""
-        timestamp = datetime.now().strftime("%H:%M:%S")
-        self.text.insert("end", f"[{timestamp}] ", "info")
         self.text.insert("end", message + "\n", tag)
         self.text.see("end")
 
     def clear(self):
-        """Clear log."""
         self.text.delete("1.0", "end")
-
-
-class ProgressPanel(tk.Frame):
-    """Progress indicator panel."""
-
-    def __init__(self, parent):
-        super().__init__(parent, bg=ModernStyle.BG_CARD)
-        self.create_widgets()
-
-    def create_widgets(self):
-        # Status label
-        self.status_label = tk.Label(
-            self,
-            text="Ready",
-            font=ModernStyle.FONT_NORMAL,
-            fg=ModernStyle.TEXT,
-            bg=ModernStyle.BG_CARD
-        )
-        self.status_label.pack(pady=(15, 10), padx=15, anchor="w")
-
-        # Progress bar
-        style = ttk.Style()
-        style.theme_use('clam')
-        style.configure(
-            "Custom.Horizontal.TProgressbar",
-            background=ModernStyle.ACCENT,
-            troughcolor=ModernStyle.BG_INPUT,
-            bordercolor=ModernStyle.BG_INPUT,
-            lightcolor=ModernStyle.ACCENT,
-            darkcolor=ModernStyle.ACCENT
-        )
-
-        self.progress = ttk.Progressbar(
-            self,
-            style="Custom.Horizontal.TProgressbar",
-            mode="indeterminate",
-            length=300
-        )
-        self.progress.pack(fill="x", padx=15, pady=(0, 15))
-
-    def start(self, message="Processing..."):
-        """Start progress animation."""
-        self.status_label.config(text=message, fg=ModernStyle.WARNING)
-        self.progress.start(10)
-
-    def stop(self, message="Ready", success=True):
-        """Stop progress animation."""
-        self.progress.stop()
-        color = ModernStyle.SUCCESS if success else ModernStyle.ERROR
-        self.status_label.config(text=message, fg=color)
-
-    def reset(self):
-        """Reset to ready state."""
-        self.progress.stop()
-        self.status_label.config(text="Ready", fg=ModernStyle.TEXT)
 
 
 class MainApplication(tk.Tk):
@@ -340,233 +361,207 @@ class MainApplication(tk.Tk):
         super().__init__()
 
         self.title("Video Subtitle Toolkit")
-        self.geometry("1000x700")
-        self.minsize(900, 600)
-        self.configure(bg=ModernStyle.BG_DARK)
+        self.geometry("800x700")
+        self.minsize(700, 600)
+        self.configure(bg=Theme.BG_DARK)
 
-        # Message queue for thread communication
+        # Configure ttk styles
+        self._setup_styles()
+
+        # State
         self.msg_queue = queue.Queue()
-        self.running_process = None
         self.is_running = False
+        self.running_process = None
 
-        self.create_widgets()
-        self.check_queue()
-        self.file_panel.refresh()
+        self._create_ui()
+        self._check_queue()
+        self.status_bar.refresh()
 
-    def create_widgets(self):
-        # Main container
-        main = tk.Frame(self, bg=ModernStyle.BG_DARK)
-        main.pack(fill="both", expand=True, padx=20, pady=20)
+    def _setup_styles(self):
+        style = ttk.Style()
+        style.theme_use('clam')
 
-        # Header
-        header = tk.Frame(main, bg=ModernStyle.BG_DARK)
-        header.pack(fill="x", pady=(0, 20))
+        style.configure("TCombobox",
+                       fieldbackground=Theme.BG_INPUT,
+                       background=Theme.BG_BUTTON,
+                       foreground=Theme.TEXT,
+                       arrowcolor=Theme.TEXT)
 
-        tk.Label(
-            header,
-            text="Video Subtitle Toolkit",
-            font=ModernStyle.FONT_TITLE,
-            fg=ModernStyle.ACCENT,
-            bg=ModernStyle.BG_DARK
-        ).pack(side="left")
+        style.map("TCombobox",
+                 fieldbackground=[("readonly", Theme.BG_INPUT)],
+                 selectbackground=[("readonly", Theme.ACCENT)],
+                 selectforeground=[("readonly", Theme.BG_DARK)])
 
-        # Refresh button
-        refresh_btn = tk.Label(
-            header,
-            text="↻ Refresh Files",
-            font=ModernStyle.FONT_NORMAL,
-            fg=ModernStyle.TEXT_DIM,
-            bg=ModernStyle.BG_DARK,
-            cursor="hand2"
+        style.configure("Custom.Horizontal.TProgressbar",
+                       background=Theme.ACCENT,
+                       troughcolor=Theme.BG_INPUT)
+
+    def _create_ui(self):
+        # Main container with padding
+        main = tk.Frame(self, bg=Theme.BG_DARK)
+        main.pack(fill="both", expand=True, padx=30, pady=20)
+
+        # === HEADER ===
+        header = tk.Frame(main, bg=Theme.BG_DARK)
+        header.pack(fill="x", pady=(0, 25))
+
+        # Logo
+        logo_frame = tk.Frame(header, bg=Theme.BG_DARK)
+        logo_frame.pack()
+
+        tk.Label(logo_frame, text="VST", font=Theme.FONT_LOGO,
+                fg=Theme.ACCENT, bg=Theme.BG_DARK).pack()
+        tk.Label(logo_frame, text="VIDEO SUBTITLE TOOLKIT",
+                font=Theme.FONT_SUBTITLE, fg=Theme.TEXT_DIM,
+                bg=Theme.BG_DARK).pack()
+
+        # === INPUT/OUTPUT SECTION ===
+        io_frame = tk.Frame(main, bg=Theme.BG_SECONDARY)
+        io_frame.pack(fill="x", pady=(0, 15), ipady=15, ipadx=15)
+
+        # Working directory display
+        dir_frame = tk.Frame(io_frame, bg=Theme.BG_SECONDARY)
+        dir_frame.pack(fill="x", padx=15, pady=(15, 10))
+
+        tk.Label(dir_frame, text="WORKING DIRECTORY", font=Theme.FONT_LABEL,
+                fg=Theme.TEXT_LABEL, bg=Theme.BG_SECONDARY).pack(anchor="w")
+
+        dir_entry = tk.Entry(dir_frame, font=Theme.FONT_NORMAL,
+                            bg=Theme.BG_INPUT, fg=Theme.TEXT,
+                            relief="flat", highlightthickness=1,
+                            highlightbackground=Theme.BG_CARD)
+        dir_entry.pack(fill="x", pady=(5, 0), ipady=8)
+        dir_entry.insert(0, str(SCRIPT_DIR))
+        dir_entry.config(state="readonly")
+
+        # === PROCESS OPTIONS ===
+        options_frame = tk.Frame(main, bg=Theme.BG_SECONDARY)
+        options_frame.pack(fill="x", pady=(0, 15), ipady=15, ipadx=15)
+
+        # Row 1: Dropdowns
+        row1 = tk.Frame(options_frame, bg=Theme.BG_SECONDARY)
+        row1.pack(fill="x", padx=15, pady=(15, 10))
+
+        self.process_dropdown = LabeledDropdown(
+            row1, "CHOOSE PROCESS",
+            ["1. Transcribe Audio", "2. Export to Text",
+             "3. Merge Translation", "4. Adjust Video Speed"],
+            "1. Transcribe Audio"
         )
-        refresh_btn.pack(side="right", padx=10)
-        refresh_btn.bind("<Button-1>", lambda e: self.file_panel.refresh())
+        self.process_dropdown.pack(side="left", padx=(0, 20))
 
-        # Content area
-        content = tk.Frame(main, bg=ModernStyle.BG_DARK)
-        content.pack(fill="both", expand=True)
+        # Checkboxes
+        check_frame = tk.Frame(row1, bg=Theme.BG_SECONDARY)
+        check_frame.pack(side="left", padx=20)
 
-        # Left sidebar - Files
-        left_panel = tk.Frame(content, bg=ModernStyle.BG_DARK, width=280)
-        left_panel.pack(side="left", fill="y", padx=(0, 15))
-        left_panel.pack_propagate(False)
+        self.gpu_check = CheckOption(check_frame, "GPU Acceleration", True)
+        self.gpu_check.pack(anchor="w")
 
-        self.file_panel = FileStatusPanel(left_panel)
-        self.file_panel.pack(fill="both", expand=True)
+        self.auto_continue = CheckOption(check_frame, "Auto-continue Pipeline", False)
+        self.auto_continue.pack(anchor="w")
 
-        # Center - Actions
-        center = tk.Frame(content, bg=ModernStyle.BG_DARK)
-        center.pack(side="left", fill="both", expand=True, padx=(0, 15))
+        # === ACTION BUTTONS ===
+        action_frame = tk.Frame(main, bg=Theme.BG_SECONDARY)
+        action_frame.pack(fill="x", pady=(0, 15), ipady=20, ipadx=15)
 
-        # Action cards
-        self.create_action_cards(center)
+        # Quick action buttons
+        quick_label = tk.Label(action_frame, text="QUICK ACTIONS",
+                              font=Theme.FONT_LABEL, fg=Theme.TEXT_LABEL,
+                              bg=Theme.BG_SECONDARY)
+        quick_label.pack(pady=(15, 10))
 
-        # Progress panel
-        self.progress_panel = ProgressPanel(center)
-        self.progress_panel.pack(fill="x", pady=(15, 0))
+        btn_row1 = tk.Frame(action_frame, bg=Theme.BG_SECONDARY)
+        btn_row1.pack(pady=5)
 
-        # Right - Logs
-        right_panel = tk.Frame(content, bg=ModernStyle.BG_DARK, width=350)
-        right_panel.pack(side="right", fill="both", expand=True)
+        self.btn_transcribe = StyledButton(btn_row1, "Transcribe",
+                                           lambda: self._run_script("run_canary.py", "Transcribing..."),
+                                           width=130)
+        self.btn_transcribe.pack(side="left", padx=5)
 
-        self.log_panel = LogPanel(right_panel)
-        self.log_panel.pack(fill="both", expand=True)
+        self.btn_export = StyledButton(btn_row1, "Export Text",
+                                       lambda: self._run_script("srt.py", "Exporting..."),
+                                       width=130)
+        self.btn_export.pack(side="left", padx=5)
 
-    def create_action_cards(self, parent):
-        """Create action button cards."""
+        self.btn_merge = StyledButton(btn_row1, "Merge",
+                                      lambda: self._run_script("text_to_srt.py", "Merging..."),
+                                      width=130)
+        self.btn_merge.pack(side="left", padx=5)
 
-        # Transcription section
-        section1 = tk.Frame(parent, bg=ModernStyle.BG_CARD)
-        section1.pack(fill="x", pady=(0, 10))
+        self.btn_adjust = StyledButton(btn_row1, "Adjust Video",
+                                       lambda: self._run_script("video_speed_adjuster_v3.py", "Adjusting..."),
+                                       width=130)
+        self.btn_adjust.pack(side="left", padx=5)
 
-        tk.Label(
-            section1, text="1. TRANSCRIPTION",
-            font=ModernStyle.FONT_HEADING,
-            fg=ModernStyle.TEXT,
-            bg=ModernStyle.BG_CARD
-        ).pack(pady=(15, 5), padx=15, anchor="w")
+        # Main action button
+        btn_row2 = tk.Frame(action_frame, bg=Theme.BG_SECONDARY)
+        btn_row2.pack(pady=(15, 10))
 
-        tk.Label(
-            section1, text="Convert audio to English subtitles using AI",
-            font=ModernStyle.FONT_SMALL,
-            fg=ModernStyle.TEXT_DIM,
-            bg=ModernStyle.BG_CARD
-        ).pack(padx=15, anchor="w")
+        self.btn_start = StyledButton(btn_row2, "▶  Start Processing",
+                                      self._start_selected, width=250, height=45, accent=True)
+        self.btn_start.pack(side="left", padx=5)
 
-        btn_frame1 = tk.Frame(section1, bg=ModernStyle.BG_CARD)
-        btn_frame1.pack(pady=15, padx=15, anchor="w")
+        self.btn_pipeline = StyledButton(btn_row2, "Full Pipeline",
+                                         self._run_full_pipeline, width=150, height=45)
+        self.btn_pipeline.pack(side="left", padx=5)
 
-        self.btn_transcribe = ActionButton(
-            btn_frame1, "Transcribe Audio",
-            lambda: self.run_script("run_canary.py", "Transcribing audio..."),
-            width=180
-        )
-        self.btn_transcribe.pack(side="left", padx=(0, 10))
+        # Progress bar
+        self.progress = ttk.Progressbar(action_frame, style="Custom.Horizontal.TProgressbar",
+                                        mode="indeterminate", length=400)
+        self.progress.pack(pady=(10, 5))
 
-        # Subtitle processing section
-        section2 = tk.Frame(parent, bg=ModernStyle.BG_CARD)
-        section2.pack(fill="x", pady=(0, 10))
+        self.status_label = tk.Label(action_frame, text="Ready",
+                                    font=Theme.FONT_NORMAL, fg=Theme.TEXT,
+                                    bg=Theme.BG_SECONDARY)
+        self.status_label.pack(pady=(0, 10))
 
-        tk.Label(
-            section2, text="2. SUBTITLE PROCESSING",
-            font=ModernStyle.FONT_HEADING,
-            fg=ModernStyle.TEXT,
-            bg=ModernStyle.BG_CARD
-        ).pack(pady=(15, 5), padx=15, anchor="w")
+        # === LOG OUTPUT ===
+        self.log_output = LogOutput(main)
+        self.log_output.pack(fill="both", expand=True, pady=(0, 15))
 
-        tk.Label(
-            section2, text="Export for translation, then merge translated text",
-            font=ModernStyle.FONT_SMALL,
-            fg=ModernStyle.TEXT_DIM,
-            bg=ModernStyle.BG_CARD
-        ).pack(padx=15, anchor="w")
+        # === STATUS BAR ===
+        self.status_bar = StatusBar(main)
+        self.status_bar.pack(fill="x")
 
-        btn_frame2 = tk.Frame(section2, bg=ModernStyle.BG_CARD)
-        btn_frame2.pack(pady=15, padx=15, anchor="w")
-
-        self.btn_export = ActionButton(
-            btn_frame2, "Export to Text",
-            lambda: self.run_script("srt.py", "Exporting to text..."),
-            color="#4a69bd",
-            width=150
-        )
-        self.btn_export.pack(side="left", padx=(0, 10))
-
-        self.btn_merge = ActionButton(
-            btn_frame2, "Merge Translation",
-            lambda: self.run_script("text_to_srt.py", "Merging translation..."),
-            color="#6a89cc",
-            width=160
-        )
-        self.btn_merge.pack(side="left", padx=(0, 10))
-
-        # Video processing section
-        section3 = tk.Frame(parent, bg=ModernStyle.BG_CARD)
-        section3.pack(fill="x", pady=(0, 10))
-
-        tk.Label(
-            section3, text="3. VIDEO PROCESSING",
-            font=ModernStyle.FONT_HEADING,
-            fg=ModernStyle.TEXT,
-            bg=ModernStyle.BG_CARD
-        ).pack(pady=(15, 5), padx=15, anchor="w")
-
-        tk.Label(
-            section3, text="Adjust video speed to match translated subtitle timing",
-            font=ModernStyle.FONT_SMALL,
-            fg=ModernStyle.TEXT_DIM,
-            bg=ModernStyle.BG_CARD
-        ).pack(padx=15, anchor="w")
-
-        btn_frame3 = tk.Frame(section3, bg=ModernStyle.BG_CARD)
-        btn_frame3.pack(pady=15, padx=15, anchor="w")
-
-        self.btn_adjust = ActionButton(
-            btn_frame3, "Adjust Video Speed",
-            lambda: self.run_script("video_speed_adjuster_v3.py", "Adjusting video..."),
-            color="#78e08f",
-            width=180
-        )
-        self.btn_adjust.pack(side="left", padx=(0, 10))
-
-        # Quick workflows
-        section4 = tk.Frame(parent, bg=ModernStyle.BG_CARD)
-        section4.pack(fill="x")
-
-        tk.Label(
-            section4, text="QUICK WORKFLOWS",
-            font=ModernStyle.FONT_HEADING,
-            fg=ModernStyle.TEXT,
-            bg=ModernStyle.BG_CARD
-        ).pack(pady=(15, 5), padx=15, anchor="w")
-
-        btn_frame4 = tk.Frame(section4, bg=ModernStyle.BG_CARD)
-        btn_frame4.pack(pady=15, padx=15, anchor="w")
-
-        self.btn_full = ActionButton(
-            btn_frame4, "Full Pipeline (1→2)",
-            self.run_full_pipeline,
-            color="#f8b739",
-            width=160
-        )
-        self.btn_full.pack(side="left", padx=(0, 10))
-
-        self.btn_post = ActionButton(
-            btn_frame4, "Post-Translation (2→3)",
-            self.run_post_translation,
-            color="#e58e26",
-            width=180
-        )
-        self.btn_post.pack(side="left")
-
-    def set_buttons_state(self, disabled):
-        """Enable/disable all action buttons."""
+    def _set_buttons_disabled(self, disabled):
         self.is_running = disabled
         for btn in [self.btn_transcribe, self.btn_export, self.btn_merge,
-                    self.btn_adjust, self.btn_full, self.btn_post]:
+                   self.btn_adjust, self.btn_start, self.btn_pipeline]:
             btn.set_disabled(disabled)
 
-    def run_script(self, script_name, status_message):
-        """Run a script in background thread."""
+    def _start_selected(self):
+        """Run the selected process from dropdown."""
+        selected = self.process_dropdown.get()
+
+        if "Transcribe" in selected:
+            self._run_script("run_canary.py", "Transcribing audio...")
+        elif "Export" in selected:
+            self._run_script("srt.py", "Exporting to text...")
+        elif "Merge" in selected:
+            self._run_script("text_to_srt.py", "Merging translation...")
+        elif "Adjust" in selected:
+            self._run_script("video_speed_adjuster_v3.py", "Adjusting video...")
+
+    def _run_script(self, script_name, status_msg):
+        """Run a script in background."""
         if self.is_running:
             return
 
-        # Scripts are bundled in BUNDLE_DIR, but work on files in SCRIPT_DIR
         script_path = BUNDLE_DIR / script_name
         if not script_path.exists():
-            # Fallback to SCRIPT_DIR
             script_path = SCRIPT_DIR / script_name
-            if not script_path.exists():
-                self.log_panel.log(f"Script not found: {script_name}", "error")
-                return
 
-        self.set_buttons_state(True)
-        self.progress_panel.start(status_message)
-        self.log_panel.log(f"Starting: {script_name}", "info")
+        if not script_path.exists():
+            self.log_output.log(f"Script not found: {script_name}", "error")
+            return
+
+        self._set_buttons_disabled(True)
+        self.progress.start(10)
+        self.status_label.config(text=status_msg, fg=Theme.WARNING)
+        self.log_output.log(f"\n=== {status_msg} ===", "info")
 
         def run():
             try:
-                # Use bundled Python or system Python
                 python_exe = sys.executable if not IS_FROZEN else "python"
                 process = subprocess.Popen(
                     [python_exe, "-u", str(script_path)],
@@ -584,29 +579,26 @@ class MainApplication(tk.Tk):
                         self.msg_queue.put(("log", line))
 
                 process.wait()
-                success = process.returncode == 0
-
-                self.msg_queue.put(("done", success))
+                self.msg_queue.put(("done", process.returncode == 0))
 
             except Exception as e:
                 self.msg_queue.put(("log", f"Error: {e}"))
                 self.msg_queue.put(("done", False))
 
-        thread = threading.Thread(target=run, daemon=True)
-        thread.start()
+        threading.Thread(target=run, daemon=True).start()
 
-    def run_full_pipeline(self):
-        """Run transcription + export."""
+    def _run_full_pipeline(self):
+        """Run complete transcription + export pipeline."""
         if self.is_running:
             return
 
         if not (SCRIPT_DIR / "input.mp3").exists():
-            self.log_panel.log("input.mp3 not found!", "error")
-            messagebox.showerror("Error", "Please add input.mp3 file first!")
+            messagebox.showerror("Error", "input.mp3 not found!\n\nPlace your audio file in the working directory.")
             return
 
-        self.set_buttons_state(True)
-        self.progress_panel.start("Running full pipeline...")
+        self._set_buttons_disabled(True)
+        self.progress.start(10)
+        self.status_label.config(text="Running full pipeline...", fg=Theme.WARNING)
 
         def run():
             scripts = [
@@ -618,7 +610,6 @@ class MainApplication(tk.Tk):
                 self.msg_queue.put(("status", msg))
                 self.msg_queue.put(("log", f"\n=== {msg} ==="))
 
-                # Find script path (bundled or local)
                 script_path = BUNDLE_DIR / script
                 if not script_path.exists():
                     script_path = SCRIPT_DIR / script
@@ -634,126 +625,55 @@ class MainApplication(tk.Tk):
                 )
 
                 for line in process.stdout:
-                    line = line.rstrip()
-                    if line:
-                        self.msg_queue.put(("log", line))
+                    if line.strip():
+                        self.msg_queue.put(("log", line.rstrip()))
 
                 process.wait()
                 if process.returncode != 0:
                     self.msg_queue.put(("done", False))
                     return
 
-            self.msg_queue.put(("log", "\n✓ Pipeline complete! Now translate output.txt → Penis.txt"))
+            self.msg_queue.put(("log", "\n✓ Pipeline complete! Translate output.txt → Penis.txt"))
             self.msg_queue.put(("done", True))
 
-        thread = threading.Thread(target=run, daemon=True)
-        thread.start()
+        threading.Thread(target=run, daemon=True).start()
 
-    def run_post_translation(self):
-        """Run merge + video adjust."""
-        if self.is_running:
-            return
-
-        missing = []
-        if not (SCRIPT_DIR / "output.srt").exists():
-            missing.append("output.srt")
-        if not (SCRIPT_DIR / "Penis.txt").exists():
-            missing.append("Penis.txt")
-        if not (SCRIPT_DIR / "input.mp4").exists():
-            missing.append("input.mp4")
-
-        if missing:
-            self.log_panel.log(f"Missing files: {', '.join(missing)}", "error")
-            messagebox.showerror("Error", f"Missing files:\n{chr(10).join(missing)}")
-            return
-
-        self.set_buttons_state(True)
-        self.progress_panel.start("Running post-translation pipeline...")
-
-        def run():
-            scripts = [
-                ("text_to_srt.py", "Merging translation..."),
-                ("video_speed_adjuster_v3.py", "Adjusting video speed...")
-            ]
-
-            for script, msg in scripts:
-                self.msg_queue.put(("status", msg))
-                self.msg_queue.put(("log", f"\n=== {msg} ==="))
-
-                # Find script path (bundled or local)
-                script_path = BUNDLE_DIR / script
-                if not script_path.exists():
-                    script_path = SCRIPT_DIR / script
-
-                python_exe = sys.executable if not IS_FROZEN else "python"
-                process = subprocess.Popen(
-                    [python_exe, "-u", str(script_path)],
-                    cwd=str(SCRIPT_DIR),
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.STDOUT,
-                    text=True,
-                    bufsize=1
-                )
-
-                for line in process.stdout:
-                    line = line.rstrip()
-                    if line:
-                        self.msg_queue.put(("log", line))
-
-                process.wait()
-                if process.returncode != 0:
-                    self.msg_queue.put(("done", False))
-                    return
-
-            self.msg_queue.put(("log", "\n✓ All done! Check output_adjusted.mp4"))
-            self.msg_queue.put(("done", True))
-
-        thread = threading.Thread(target=run, daemon=True)
-        thread.start()
-
-    def check_queue(self):
+    def _check_queue(self):
         """Process messages from background threads."""
         try:
             while True:
                 msg_type, data = self.msg_queue.get_nowait()
 
                 if msg_type == "log":
-                    # Determine tag based on content
                     tag = None
                     if "error" in data.lower() or "❌" in data:
                         tag = "error"
-                    elif "✓" in data or "✅" in data or "done" in data.lower():
+                    elif "✓" in data or "✅" in data:
                         tag = "success"
-                    elif "warning" in data.lower() or "⚠" in data:
-                        tag = "warning"
-
-                    self.log_panel.log(data, tag)
+                    self.log_output.log(data, tag)
 
                 elif msg_type == "status":
-                    self.progress_panel.start(data)
+                    self.status_label.config(text=data, fg=Theme.WARNING)
 
                 elif msg_type == "done":
-                    success = data
-                    if success:
-                        self.progress_panel.stop("Completed!", success=True)
-                        self.log_panel.log("Task completed successfully!", "success")
+                    self.progress.stop()
+                    if data:
+                        self.status_label.config(text="Completed!", fg=Theme.SUCCESS)
                     else:
-                        self.progress_panel.stop("Failed!", success=False)
-                        self.log_panel.log("Task failed!", "error")
+                        self.status_label.config(text="Failed!", fg=Theme.ERROR)
 
-                    self.set_buttons_state(False)
-                    self.file_panel.refresh()
+                    self._set_buttons_disabled(False)
+                    self.status_bar.refresh()
                     self.running_process = None
 
         except queue.Empty:
             pass
 
-        self.after(100, self.check_queue)
+        self.after(100, self._check_queue)
 
     def on_closing(self):
-        """Handle window close."""
         if self.running_process:
-            if messagebox.askyesno("Confirm", "A process is running. Stop it?"):
+            if messagebox.askyesno("Confirm", "Process running. Stop and exit?"):
                 self.running_process.terminate()
                 self.destroy()
         else:
