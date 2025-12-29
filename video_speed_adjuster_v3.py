@@ -35,8 +35,8 @@ MAX_CPS = 16.0              # Trigger slowdown above this
 TARGET_WPS = 2.0            # Target Words Per Second (slow, clear speech)
 MAX_WPS = 2.3               # Max WPS before slowdown (aggressive threshold)
 MIN_SPEED = 0.4             # Минимальная скорость (макс. замедление 2.5x)
-MAX_SPEED = 2.0             # Максимальная скорость (макс. ускорение 2x)
-MERGE_THRESHOLD = 0.02      # Порог для слияния сегментов (разница скоростей)
+MAX_SPEED = 2.5             # Максимальная скорость (макс. замедление 2.5x)
+MERGE_THRESHOLD = 0.0       # ОТКЛЮЧЕНО - каждый субтитр = отдельный сегмент
 CPS_MODE = True             # Use CPS-based calculation (more accurate for dubbing)
 
 print_lock = threading.Lock()
@@ -471,40 +471,55 @@ def process_segment(args: tuple) -> Optional[Dict]:
 
 
 def calculate_new_subtitle_times(results: List[Dict], subtitle_info: List[Dict]) -> List[Dict]:
-    """Пересчитывает тайминги субтитров для выходного видео."""
+    """
+    Пересчитывает тайминги субтитров для выходного видео.
 
-    # Строим временную карту: orig_time → new_time
+    ВАЖНО: Используем РЕАЛЬНУЮ длительность сегментов (output_duration_ms),
+    а не теоретическую скорость. Это гарантирует соответствие субтитров видео.
+    """
+
+    # Строим временную карту с РЕАЛЬНЫМИ коэффициентами замедления
     time_map = []
     new_pos = 0
 
     for r in sorted(results, key=lambda x: x['idx']):
+        orig_start = r['orig_start_ms']
+        orig_end = r['orig_end_ms']
+        orig_duration = orig_end - orig_start
+        output_duration = r['output_duration_ms']
+
+        # РЕАЛЬНЫЙ коэффициент замедления = выходная длительность / исходная
+        actual_speed = output_duration / orig_duration if orig_duration > 0 else 1.0
+
         time_map.append({
-            'orig_start': r['orig_start_ms'],
-            'orig_end': r['orig_end_ms'],
+            'orig_start': orig_start,
+            'orig_end': orig_end,
             'new_start': new_pos,
-            'new_end': new_pos + r['output_duration_ms'],
-            'speed': r['speed']
+            'new_end': new_pos + output_duration,
+            'actual_speed': actual_speed
         })
-        new_pos += r['output_duration_ms']
+        new_pos += output_duration
 
     # Пересчитываем позиции субтитров
     new_subs = []
 
     for sub in subtitle_info:
-        orig_start = sub['orig_start_ms']
-        orig_end = sub['orig_end_ms']
+        sub_orig_start = sub['orig_start_ms']
+        sub_orig_end = sub['orig_end_ms']
+        sub_orig_duration = sub_orig_end - sub_orig_start
 
         # Ищем сегмент, содержащий начало субтитра
         for tm in time_map:
-            if tm['orig_start'] <= orig_start < tm['orig_end']:
-                # Интерполируем позицию
-                offset_orig = orig_start - tm['orig_start']
-                offset_new = int(offset_orig * tm['speed'])
+            if tm['orig_start'] <= sub_orig_start < tm['orig_end']:
+                # Смещение внутри сегмента (в исходном видео)
+                offset_in_segment = sub_orig_start - tm['orig_start']
+
+                # Масштабируем смещение по РЕАЛЬНОМУ замедлению сегмента
+                offset_new = int(offset_in_segment * tm['actual_speed'])
                 new_start = tm['new_start'] + offset_new
 
-                # Длительность масштабируется по скорости субтитра
-                orig_duration = orig_end - orig_start
-                new_duration = int(orig_duration * sub['speed'])
+                # Длительность субтитра масштабируется по РЕАЛЬНОМУ замедлению
+                new_duration = int(sub_orig_duration * tm['actual_speed'])
                 new_end = new_start + new_duration
 
                 new_subs.append({
