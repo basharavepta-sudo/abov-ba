@@ -12,6 +12,7 @@ By default, looks for 'output.srt' in the same folder as this script.
 
 import re
 import sys
+import argparse
 from pathlib import Path
 
 
@@ -96,12 +97,17 @@ def convert_srt_to_numbered(input_path: Path, output_path: Path) -> str:
 
 
 def main():
-    # Get the directory where this script is located
-    script_dir = Path(__file__).parent.resolve()
+    parser = argparse.ArgumentParser(description="SRT to Numbered Text Converter")
+    parser.add_argument("--input", "-i", type=str, default="output.srt", help="Input SRT file")
+    parser.add_argument("--output", "-o", type=str, default="output.txt", help="Output Text file")
+    args = parser.parse_args()
 
-    # Input and output files in the same folder as script
-    input_file = script_dir / 'output.srt'
-    output_file = script_dir / 'output.txt'
+    # Get the directory where this script is located
+    # script_dir = Path(__file__).parent.resolve()
+
+    # Input and output files
+    input_file = Path(args.input).resolve()
+    output_file = Path(args.output).resolve()
 
     print(f"Looking for: {input_file}")
 
@@ -114,7 +120,7 @@ def main():
 
     except FileNotFoundError as e:
         print(f"Error: {e}", file=sys.stderr)
-        print(f"\nMake sure 'output.srt' is in the same folder as this script.", file=sys.stderr)
+        # print(f"\nMake sure 'output.srt' is in the same folder as this script.", file=sys.stderr)
         sys.exit(1)
     except ValueError as e:
         print(f"Error: {e}", file=sys.stderr)

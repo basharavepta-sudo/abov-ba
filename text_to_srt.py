@@ -10,6 +10,7 @@ Files must be in the same folder as this script.
 
 import re
 import sys
+import argparse
 from pathlib import Path
 
 
@@ -88,15 +89,18 @@ def create_srt(timecodes: list[str], texts: list[str]) -> str:
 
 
 def main():
-    # Get the directory where this script is located
-    script_dir = Path(__file__).parent.resolve()
+    parser = argparse.ArgumentParser(description="Merge Translation with Timings")
+    parser.add_argument("--srt", "-s", type=str, default="output.srt", help="Original SRT file (for timings)")
+    parser.add_argument("--text", "-t", type=str, default="Penis.txt", help="Translated numbered text file")
+    parser.add_argument("--output", "-o", type=str, default="result.srt", help="Output SRT file")
+    args = parser.parse_args()
 
     # Input files
-    srt_file = script_dir / 'output.srt'
-    text_file = script_dir / 'Penis.txt'
+    srt_file = Path(args.srt).resolve()
+    text_file = Path(args.text).resolve()
 
     # Output file
-    output_file = script_dir / 'result.srt'
+    output_file = Path(args.output).resolve()
 
     print(f"Reading timings from: {srt_file}")
     print(f"Reading text from: {text_file}")

@@ -66,9 +66,12 @@ def print_file_status():
     print("  " + "-" * 50)
 
 
-def run_script(script_name: str, description: str) -> bool:
+def run_script(script_name: str, description: str, args: list = None) -> bool:
     """Run a Python script and return success status."""
     script_path = SCRIPT_DIR / script_name
+
+    if args is None:
+        args = []
 
     if not script_path.exists():
         print(f"\n  ERROR: {script_name} not found!")
@@ -78,8 +81,9 @@ def run_script(script_name: str, description: str) -> bool:
     print("  " + "=" * 50)
 
     try:
+        cmd = [sys.executable, str(script_path)] + args
         result = subprocess.run(
-            [sys.executable, str(script_path)],
+            cmd,
             cwd=str(SCRIPT_DIR)
         )
         return result.returncode == 0
@@ -218,7 +222,9 @@ def main():
                 print("  Please place your audio file as 'input.mp3' in this folder.")
                 input("\n  Press Enter to continue...")
                 continue
-            run_script("run_canary.py", "Parakeet TDT Transcription")
+            # Pass explicit default arguments to match legacy behavior
+            run_script("run_canary.py", "Parakeet TDT Transcription",
+                       ["--input", "input.mp3", "--output", "output.srt"])
             input("\n  Press Enter to continue...")
 
         elif choice == "2":
@@ -227,7 +233,8 @@ def main():
                 print("  Run transcription first (option 1).")
                 input("\n  Press Enter to continue...")
                 continue
-            run_script("srt.py", "SRT to Text Converter")
+            run_script("srt.py", "SRT to Text Converter",
+                       ["--input", "output.srt", "--output", "output.txt"])
             input("\n  Press Enter to continue...")
 
         elif choice == "3":
@@ -240,7 +247,8 @@ def main():
                 print("  Save your translated text as 'Penis.txt' in this folder.")
                 input("\n  Press Enter to continue...")
                 continue
-            run_script("text_to_srt.py", "Merge Translation with Timings")
+            run_script("text_to_srt.py", "Merge Translation with Timings",
+                       ["--srt", "output.srt", "--text", "Penis.txt", "--output", "result.srt"])
             input("\n  Press Enter to continue...")
 
         elif choice == "4":
@@ -252,12 +260,21 @@ def main():
                 print("\n  ERROR: output.srt not found!")
                 input("\n  Press Enter to continue...")
                 continue
-            if not (SCRIPT_DIR / "Penis.txt").exists() and not (SCRIPT_DIR / "russian.srt").exists():
-                print("\n  ERROR: No translation found!")
-                print("  Need either Penis.txt or russian.srt")
-                input("\n  Press Enter to continue...")
-                continue
-            run_script("video_speed_adjuster_v3.py", "Video Speed Adjuster")
+
+            trans_file = "Penis.txt"
+            if not (SCRIPT_DIR / "Penis.txt").exists():
+                if (SCRIPT_DIR / "russian.srt").exists():
+                    trans_file = "russian.srt"
+                else:
+                    print("\n  ERROR: No translation found!")
+                    print("  Need either Penis.txt or russian.srt")
+                    input("\n  Press Enter to continue...")
+                    continue
+
+            run_script("video_speed_adjuster_v3.py", "Video Speed Adjuster",
+                       ["--input_video", "input.mp4", "--eng_srt", "output.srt",
+                        "--trans_file", trans_file,
+                        "--output_video", "output_adjusted.mp4", "--output_srt", "adjusted.srt"])
             input("\n  Press Enter to continue...")
 
         elif choice == "5":
@@ -270,9 +287,9 @@ def main():
                 input("\n  Press Enter to continue...")
                 continue
 
-            if run_script("run_canary.py", "Step 1: Transcription"):
+            if run_script("run_canary.py", "Step 1: Transcription", ["--input", "input.mp3", "--output", "output.srt"]):
                 print("\n  Step 1 complete!")
-                if run_script("srt.py", "Step 2: Export to Text"):
+                if run_script("srt.py", "Step 2: Export to Text", ["--input", "output.srt", "--output", "output.txt"]):
                     print("\n  " + "=" * 50)
                     print("  Pipeline complete!")
                     print("  ")
@@ -293,7 +310,8 @@ def main():
             if not (SCRIPT_DIR / "output.srt").exists():
                 missing.append("output.srt")
             if not (SCRIPT_DIR / "Penis.txt").exists():
-                missing.append("Penis.txt")
+                 if not (SCRIPT_DIR / "russian.srt").exists():
+                    missing.append("Penis.txt or russian.srt")
             if not (SCRIPT_DIR / "input.mp4").exists():
                 missing.append("input.mp4")
 
@@ -302,9 +320,17 @@ def main():
                 input("\n  Press Enter to continue...")
                 continue
 
-            if run_script("text_to_srt.py", "Step 1: Merge Translation"):
+            trans_file = "Penis.txt"
+            if not (SCRIPT_DIR / "Penis.txt").exists() and (SCRIPT_DIR / "russian.srt").exists():
+                trans_file = "russian.srt"
+
+            if run_script("text_to_srt.py", "Step 1: Merge Translation",
+                          ["--srt", "output.srt", "--text", trans_file, "--output", "result.srt"]):
                 print("\n  Step 1 complete!")
-                if run_script("video_speed_adjuster_v3.py", "Step 2: Adjust Video"):
+                if run_script("video_speed_adjuster_v3.py", "Step 2: Adjust Video",
+                              ["--input_video", "input.mp4", "--eng_srt", "output.srt",
+                               "--trans_file", trans_file,
+                               "--output_video", "output_adjusted.mp4", "--output_srt", "adjusted.srt"]):
                     print("\n  " + "=" * 50)
                     print("  Pipeline complete!")
                     print("  ")

@@ -16,16 +16,7 @@ from datetime import datetime
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 
-# Detect if running as PyInstaller bundle
-if getattr(sys, 'frozen', False):
-    BUNDLE_DIR = Path(sys._MEIPASS)
-    SCRIPT_DIR = Path(sys.executable).parent.resolve()
-    IS_FROZEN = True
-else:
-    BUNDLE_DIR = Path(__file__).parent.resolve()
-    SCRIPT_DIR = BUNDLE_DIR
-    IS_FROZEN = False
-
+SCRIPT_DIR = Path(__file__).parent.resolve()
 
 class Theme:
     """Modern dark theme with teal accents (UVR5 style)."""
@@ -143,20 +134,27 @@ class StyledButton(tk.Canvas):
 class FileSelector(tk.Frame):
     """File/folder selector with button and entry."""
 
-    def __init__(self, parent, label, is_folder=False, file_types=None):
+    def __init__(self, parent, label, is_folder=False, file_types=None, default_text=""):
         super().__init__(parent, bg=Theme.BG_SECONDARY)
 
         self.is_folder = is_folder
         self.file_types = file_types or [("All files", "*.*")]
-        self.path_var = tk.StringVar()
+        self.path_var = tk.StringVar(value=default_text)
 
-        # Button
-        self.btn = StyledButton(self, label, self._browse, width=120)
-        self.btn.pack(side="left", padx=(0, 10))
+        # Label
+        tk.Label(
+            self, text=label,
+            font=Theme.FONT_LABEL,
+            fg=Theme.TEXT_LABEL,
+            bg=Theme.BG_SECONDARY
+        ).pack(anchor="w", pady=(0, 5))
+
+        container = tk.Frame(self, bg=Theme.BG_SECONDARY)
+        container.pack(fill="x")
 
         # Entry
         self.entry = tk.Entry(
-            self, textvariable=self.path_var,
+            container, textvariable=self.path_var,
             font=Theme.FONT_NORMAL,
             bg=Theme.BG_INPUT,
             fg=Theme.TEXT,
@@ -166,16 +164,11 @@ class FileSelector(tk.Frame):
             highlightbackground=Theme.BG_CARD,
             highlightcolor=Theme.ACCENT
         )
-        self.entry.pack(side="left", fill="x", expand=True, ipady=8)
+        self.entry.pack(side="left", fill="x", expand=True, ipady=5)
 
-        # Browse icon button
-        self.icon_btn = tk.Label(
-            self, text="📁", font=("Segoe UI", 14),
-            bg=Theme.BG_SECONDARY, fg=Theme.TEXT_DIM,
-            cursor="hand2"
-        )
-        self.icon_btn.pack(side="right", padx=(10, 0))
-        self.icon_btn.bind("<Button-1>", lambda e: self._browse())
+        # Button
+        self.btn = StyledButton(container, "Browse", self._browse, width=80, height=30)
+        self.btn.pack(side="right", padx=(10, 0))
 
     def _browse(self):
         if self.is_folder:
@@ -260,49 +253,22 @@ class CheckOption(tk.Frame):
 
 
 class StatusBar(tk.Frame):
-    """Bottom status bar with file indicators."""
-
-    FILES = [
-        ("input.mp3", "Audio"),
-        ("input.mp4", "Video"),
-        ("output.srt", "SRT"),
-        ("Penis.txt", "Translation"),
-    ]
+    """Bottom status bar with simple status."""
 
     def __init__(self, parent):
         super().__init__(parent, bg=Theme.BG_DARK)
 
-        self.indicators = {}
-
-        for filename, label in self.FILES:
-            frame = tk.Frame(self, bg=Theme.BG_DARK)
-            frame.pack(side="left", padx=15)
-
-            dot = tk.Label(frame, text="●", font=("Segoe UI", 10),
-                          fg=Theme.TEXT_DIM, bg=Theme.BG_DARK)
-            dot.pack(side="left")
-
-            lbl = tk.Label(frame, text=label, font=Theme.FONT_SMALL,
-                          fg=Theme.TEXT_DIM, bg=Theme.BG_DARK)
-            lbl.pack(side="left", padx=(5, 0))
-
-            self.indicators[filename] = dot
-
         # Version label on right
         self.version = tk.Label(
-            self, text=f"Video Subtitle Toolkit v1.0 [{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}]",
+            self, text=f"Video Subtitle Toolkit v3.0",
             font=Theme.FONT_SMALL,
             fg=Theme.TEXT_DIM,
             bg=Theme.BG_DARK
         )
-        self.version.pack(side="right", padx=15)
+        self.version.pack(side="right", padx=15, pady=5)
 
     def refresh(self):
-        for filename, dot in self.indicators.items():
-            if (SCRIPT_DIR / filename).exists():
-                dot.config(fg=Theme.SUCCESS)
-            else:
-                dot.config(fg=Theme.TEXT_DIM)
+        pass
 
 
 class LogOutput(tk.Frame):
@@ -361,8 +327,8 @@ class MainApplication(tk.Tk):
         super().__init__()
 
         self.title("Video Subtitle Toolkit")
-        self.geometry("800x700")
-        self.minsize(700, 600)
+        self.geometry("900x800")
+        self.minsize(800, 700)
         self.configure(bg=Theme.BG_DARK)
 
         # Configure ttk styles
@@ -375,7 +341,6 @@ class MainApplication(tk.Tk):
 
         self._create_ui()
         self._check_queue()
-        self.status_bar.refresh()
 
     def _setup_styles(self):
         style = ttk.Style()
@@ -403,7 +368,7 @@ class MainApplication(tk.Tk):
 
         # === HEADER ===
         header = tk.Frame(main, bg=Theme.BG_DARK)
-        header.pack(fill="x", pady=(0, 25))
+        header.pack(fill="x", pady=(0, 20))
 
         # Logo
         logo_frame = tk.Frame(header, bg=Theme.BG_DARK)
@@ -415,32 +380,32 @@ class MainApplication(tk.Tk):
                 font=Theme.FONT_SUBTITLE, fg=Theme.TEXT_DIM,
                 bg=Theme.BG_DARK).pack()
 
-        # === INPUT/OUTPUT SECTION ===
-        io_frame = tk.Frame(main, bg=Theme.BG_SECONDARY)
-        io_frame.pack(fill="x", pady=(0, 15), ipady=15, ipadx=15)
+        # === INPUT SECTION ===
+        input_frame = tk.LabelFrame(main, text="  FILES  ", bg=Theme.BG_SECONDARY,
+                                   fg=Theme.TEXT_LABEL, font=Theme.FONT_LABEL, bd=0)
+        input_frame.pack(fill="x", pady=(0, 15), ipady=10, ipadx=10)
 
-        # Working directory display
-        dir_frame = tk.Frame(io_frame, bg=Theme.BG_SECONDARY)
-        dir_frame.pack(fill="x", padx=15, pady=(15, 10))
+        # File Selectors
+        self.file_audio = FileSelector(input_frame, "Audio Input (.mp3)", file_types=[("Audio", "*.mp3 *.wav *.m4a")], default_text="input.mp3")
+        self.file_audio.pack(fill="x", padx=10, pady=5)
 
-        tk.Label(dir_frame, text="WORKING DIRECTORY", font=Theme.FONT_LABEL,
-                fg=Theme.TEXT_LABEL, bg=Theme.BG_SECONDARY).pack(anchor="w")
+        self.file_video = FileSelector(input_frame, "Video Input (.mp4)", file_types=[("Video", "*.mp4 *.mkv *.mov")], default_text="input.mp4")
+        self.file_video.pack(fill="x", padx=10, pady=5)
 
-        dir_entry = tk.Entry(dir_frame, font=Theme.FONT_NORMAL,
-                            bg=Theme.BG_INPUT, fg=Theme.TEXT,
-                            relief="flat", highlightthickness=1,
-                            highlightbackground=Theme.BG_CARD)
-        dir_entry.pack(fill="x", pady=(5, 0), ipady=8)
-        dir_entry.insert(0, str(SCRIPT_DIR))
-        dir_entry.config(state="readonly")
+        self.file_srt_eng = FileSelector(input_frame, "Original Subtitles (.srt)", file_types=[("SRT", "*.srt")], default_text="output.srt")
+        self.file_srt_eng.pack(fill="x", padx=10, pady=5)
+
+        self.file_trans = FileSelector(input_frame, "Translation (.txt / .srt)", file_types=[("Text/SRT", "*.txt *.srt")], default_text="Penis.txt")
+        self.file_trans.pack(fill="x", padx=10, pady=5)
+
 
         # === PROCESS OPTIONS ===
         options_frame = tk.Frame(main, bg=Theme.BG_SECONDARY)
-        options_frame.pack(fill="x", pady=(0, 15), ipady=15, ipadx=15)
+        options_frame.pack(fill="x", pady=(0, 15), ipady=10, ipadx=10)
 
         # Row 1: Dropdowns
         row1 = tk.Frame(options_frame, bg=Theme.BG_SECONDARY)
-        row1.pack(fill="x", padx=15, pady=(15, 10))
+        row1.pack(fill="x", padx=10, pady=5)
 
         self.process_dropdown = LabeledDropdown(
             row1, "CHOOSE PROCESS",
@@ -450,58 +415,22 @@ class MainApplication(tk.Tk):
         )
         self.process_dropdown.pack(side="left", padx=(0, 20))
 
-        # Checkboxes
-        check_frame = tk.Frame(row1, bg=Theme.BG_SECONDARY)
-        check_frame.pack(side="left", padx=20)
+        self.process_dropdown.combo.bind("<<ComboboxSelected>>", self._on_process_change)
 
-        self.gpu_check = CheckOption(check_frame, "GPU Acceleration", True)
-        self.gpu_check.pack(anchor="w")
-
-        self.auto_continue = CheckOption(check_frame, "Auto-continue Pipeline", False)
-        self.auto_continue.pack(anchor="w")
 
         # === ACTION BUTTONS ===
         action_frame = tk.Frame(main, bg=Theme.BG_SECONDARY)
-        action_frame.pack(fill="x", pady=(0, 15), ipady=20, ipadx=15)
-
-        # Quick action buttons
-        quick_label = tk.Label(action_frame, text="QUICK ACTIONS",
-                              font=Theme.FONT_LABEL, fg=Theme.TEXT_LABEL,
-                              bg=Theme.BG_SECONDARY)
-        quick_label.pack(pady=(15, 10))
-
-        btn_row1 = tk.Frame(action_frame, bg=Theme.BG_SECONDARY)
-        btn_row1.pack(pady=5)
-
-        self.btn_transcribe = StyledButton(btn_row1, "Transcribe",
-                                           lambda: self._run_script("run_canary.py", "Transcribing..."),
-                                           width=130)
-        self.btn_transcribe.pack(side="left", padx=5)
-
-        self.btn_export = StyledButton(btn_row1, "Export Text",
-                                       lambda: self._run_script("srt.py", "Exporting..."),
-                                       width=130)
-        self.btn_export.pack(side="left", padx=5)
-
-        self.btn_merge = StyledButton(btn_row1, "Merge",
-                                      lambda: self._run_script("text_to_srt.py", "Merging..."),
-                                      width=130)
-        self.btn_merge.pack(side="left", padx=5)
-
-        self.btn_adjust = StyledButton(btn_row1, "Adjust Video",
-                                       lambda: self._run_script("video_speed_adjuster_v3.py", "Adjusting..."),
-                                       width=130)
-        self.btn_adjust.pack(side="left", padx=5)
+        action_frame.pack(fill="x", pady=(0, 15), ipady=15, ipadx=15)
 
         # Main action button
-        btn_row2 = tk.Frame(action_frame, bg=Theme.BG_SECONDARY)
-        btn_row2.pack(pady=(15, 10))
+        btn_row = tk.Frame(action_frame, bg=Theme.BG_SECONDARY)
+        btn_row.pack(pady=10)
 
-        self.btn_start = StyledButton(btn_row2, "▶  Start Processing",
+        self.btn_start = StyledButton(btn_row, "▶  Start Processing",
                                       self._start_selected, width=250, height=45, accent=True)
         self.btn_start.pack(side="left", padx=5)
 
-        self.btn_pipeline = StyledButton(btn_row2, "Full Pipeline",
+        self.btn_pipeline = StyledButton(btn_row, "Full Pipeline",
                                          self._run_full_pipeline, width=150, height=45)
         self.btn_pipeline.pack(side="left", padx=5)
 
@@ -523,34 +452,79 @@ class MainApplication(tk.Tk):
         self.status_bar = StatusBar(main)
         self.status_bar.pack(fill="x")
 
+        # Initial validation state
+        self._on_process_change(None)
+
+    def _on_process_change(self, event):
+        """Update UI based on selected process."""
+        # Could hide/show relevant file inputs, but simpler to just keep all visible for now
+        pass
+
     def _set_buttons_disabled(self, disabled):
         self.is_running = disabled
-        for btn in [self.btn_transcribe, self.btn_export, self.btn_merge,
-                   self.btn_adjust, self.btn_start, self.btn_pipeline]:
+        for btn in [self.btn_start, self.btn_pipeline]:
             btn.set_disabled(disabled)
+
+        # Also disable file inputs during run
+        state = "disabled" if disabled else "normal"
+        self.file_audio.entry.config(state=state)
+        self.file_video.entry.config(state=state)
+        self.file_srt_eng.entry.config(state=state)
+        self.file_trans.entry.config(state=state)
+
+    def _get_abs_path(self, path_str):
+        if not path_str: return None
+        return str(Path(path_str).resolve())
 
     def _start_selected(self):
         """Run the selected process from dropdown."""
         selected = self.process_dropdown.get()
 
         if "Transcribe" in selected:
-            self._run_script("run_canary.py", "Transcribing audio...")
-        elif "Export" in selected:
-            self._run_script("srt.py", "Exporting to text...")
-        elif "Merge" in selected:
-            self._run_script("text_to_srt.py", "Merging translation...")
-        elif "Adjust" in selected:
-            self._run_script("video_speed_adjuster_v3.py", "Adjusting video...")
+            audio = self._get_abs_path(self.file_audio.get())
+            output = self._get_abs_path(self.file_srt_eng.get())
+            if not audio: return messagebox.showerror("Error", "Please select an audio file.")
 
-    def _run_script(self, script_name, status_msg):
+            self._run_script("run_canary.py", ["--input", audio, "--output", output], "Transcribing audio...")
+
+        elif "Export" in selected:
+            input_srt = self._get_abs_path(self.file_srt_eng.get())
+            output_txt = str(Path(input_srt).parent / "output.txt") # Default output based on input
+            if not input_srt: return messagebox.showerror("Error", "Please select an input SRT file.")
+
+            self._run_script("srt.py", ["--input", input_srt, "--output", output_txt], "Exporting to text...")
+            self.log_output.log(f"Output will be: {output_txt}", "info")
+
+        elif "Merge" in selected:
+            srt = self._get_abs_path(self.file_srt_eng.get())
+            text = self._get_abs_path(self.file_trans.get())
+            output = str(Path(srt).parent / "result.srt")
+            if not srt or not text: return messagebox.showerror("Error", "Please select SRT and Translation file.")
+
+            self._run_script("text_to_srt.py", ["--srt", srt, "--text", text, "--output", output], "Merging translation...")
+
+        elif "Adjust" in selected:
+            video = self._get_abs_path(self.file_video.get())
+            eng_srt = self._get_abs_path(self.file_srt_eng.get())
+            trans_file = self._get_abs_path(self.file_trans.get())
+            output_video = str(Path(video).parent / "output_adjusted.mp4")
+            output_srt = str(Path(video).parent / "adjusted.srt")
+
+            if not video or not eng_srt or not trans_file:
+                return messagebox.showerror("Error", "Please select Video, English SRT, and Translation file.")
+
+            self._run_script("video_speed_adjuster_v3.py",
+                             ["--input_video", video, "--eng_srt", eng_srt,
+                              "--trans_file", trans_file, "--output_video", output_video,
+                              "--output_srt", output_srt],
+                             "Adjusting video...")
+
+    def _run_script(self, script_name, args, status_msg):
         """Run a script in background."""
         if self.is_running:
             return
 
-        script_path = BUNDLE_DIR / script_name
-        if not script_path.exists():
-            script_path = SCRIPT_DIR / script_name
-
+        script_path = SCRIPT_DIR / script_name
         if not script_path.exists():
             self.log_output.log(f"Script not found: {script_name}", "error")
             return
@@ -562,9 +536,10 @@ class MainApplication(tk.Tk):
 
         def run():
             try:
-                python_exe = sys.executable if not IS_FROZEN else "python"
+                cmd = [sys.executable, "-u", str(script_path)] + args
+
                 process = subprocess.Popen(
-                    [python_exe, "-u", str(script_path)],
+                    cmd,
                     cwd=str(SCRIPT_DIR),
                     stdout=subprocess.PIPE,
                     stderr=subprocess.STDOUT,
@@ -592,31 +567,34 @@ class MainApplication(tk.Tk):
         if self.is_running:
             return
 
-        if not (SCRIPT_DIR / "input.mp3").exists():
-            messagebox.showerror("Error", "input.mp3 not found!\n\nPlace your audio file in the working directory.")
+        audio = self._get_abs_path(self.file_audio.get())
+        if not audio:
+            messagebox.showerror("Error", "Please select an Audio file.")
             return
+
+        # Define outputs
+        srt_out = str(Path(audio).parent / "output.srt")
+        txt_out = str(Path(audio).parent / "output.txt")
 
         self._set_buttons_disabled(True)
         self.progress.start(10)
         self.status_label.config(text="Running full pipeline...", fg=Theme.WARNING)
 
         def run():
-            scripts = [
-                ("run_canary.py", "Transcribing audio..."),
-                ("srt.py", "Exporting to text...")
+            steps = [
+                ("run_canary.py", ["--input", audio, "--output", srt_out], "Transcribing audio..."),
+                ("srt.py", ["--input", srt_out, "--output", txt_out], "Exporting to text...")
             ]
 
-            for script, msg in scripts:
+            for script, args, msg in steps:
                 self.msg_queue.put(("status", msg))
                 self.msg_queue.put(("log", f"\n=== {msg} ==="))
 
-                script_path = BUNDLE_DIR / script
-                if not script_path.exists():
-                    script_path = SCRIPT_DIR / script
+                script_path = SCRIPT_DIR / script
+                cmd = [sys.executable, "-u", str(script_path)] + args
 
-                python_exe = sys.executable if not IS_FROZEN else "python"
                 process = subprocess.Popen(
-                    [python_exe, "-u", str(script_path)],
+                    cmd,
                     cwd=str(SCRIPT_DIR),
                     stdout=subprocess.PIPE,
                     stderr=subprocess.STDOUT,
@@ -633,7 +611,10 @@ class MainApplication(tk.Tk):
                     self.msg_queue.put(("done", False))
                     return
 
-            self.msg_queue.put(("log", "\n✓ Pipeline complete! Translate output.txt → Penis.txt"))
+            # Update the fields in UI to point to generated files
+            self.file_srt_eng.set(srt_out)
+
+            self.msg_queue.put(("log", f"\n✓ Pipeline complete!\nTranslate {txt_out} -> Then select it in Translation field."))
             self.msg_queue.put(("done", True))
 
         threading.Thread(target=run, daemon=True).start()
