@@ -520,8 +520,9 @@ def main():
     rus_srt_file = Path(os.environ.get('VST_TRANSLATION', script_dir / 'russian.srt'))
     rus_txt_file = Path(os.environ.get('VST_TRANSLATION', script_dir / 'Penis.txt'))
 
-    # Output files go to the same directory as input video
-    output_dir = input_video.parent
+    # Output directory from environment or default to input video's parent
+    output_dir_env = os.environ.get('VST_OUTPUT_DIR', '')
+    output_dir = Path(output_dir_env) if output_dir_env else input_video.parent
     output_video = output_dir / 'output_adjusted.mp4'
     output_srt = output_dir / 'adjusted.srt'
     temp_dir = output_dir / 'temp_segments'
@@ -531,15 +532,16 @@ def main():
     print("=" * 65)
     print(f"  📊 Target CPS: {TARGET_CPS} (always below {MAX_CPS} for Aegisub)")
     print(f"  ⚡ Speed range: {MIN_SPEED}x - {MAX_SPEED}x")
+    print(f"  📂 Output dir: {output_dir}")
     print("=" * 65)
 
     # Проверка входного видео
     if not input_video.exists():
-        print(f"❌ Не найден: input.mp4")
+        print(f"❌ Не найден видео файл: {input_video}")
         sys.exit(1)
 
     if not eng_srt_file.exists():
-        print(f"❌ Не найден: output.srt (английские субтитры)")
+        print(f"❌ Не найден SRT файл: {eng_srt_file}")
         sys.exit(1)
 
     # Ищем русские субтитры (SRT или TXT)
@@ -555,7 +557,7 @@ def main():
         rus_is_srt = False
         print(f"📄 Русский текст: Penis.txt")
     else:
-        print(f"❌ Не найден: russian.srt или Penis.txt")
+        print(f"❌ Не найден файл перевода: {rus_txt_file}")
         sys.exit(1)
 
     # Читаем английские субтитры

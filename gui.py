@@ -202,6 +202,46 @@ class FileInput(tk.Frame):
         self.var.set(value)
 
 
+class DirInput(tk.Frame):
+    """Directory input with label, entry and browse button."""
+    def __init__(self, parent, label, default="", tooltip=None):
+        super().__init__(parent, bg=Theme.BG_SECONDARY)
+
+        # Label
+        tk.Label(self, text=label, font=Theme.FONT_LABEL,
+                fg=Theme.TEXT_LABEL, bg=Theme.BG_SECONDARY).pack(anchor="w", pady=(0, 3))
+
+        # Entry frame
+        entry_frame = tk.Frame(self, bg=Theme.BG_SECONDARY)
+        entry_frame.pack(fill="x")
+
+        # Entry
+        self.var = tk.StringVar(value=default)
+        self.entry = tk.Entry(entry_frame, textvariable=self.var, font=Theme.FONT_NORMAL,
+                             bg=Theme.BG_INPUT, fg=Theme.TEXT, insertbackground=Theme.TEXT,
+                             relief="flat", highlightthickness=1,
+                             highlightbackground=Theme.BG_CARD, highlightcolor=Theme.ACCENT)
+        self.entry.pack(side="left", fill="x", expand=True, ipady=6)
+
+        # Browse button
+        self.browse_btn = StyledButton(entry_frame, "Browse", self._browse, width=80, height=32)
+        self.browse_btn.pack(side="right", padx=(10, 0))
+
+        if tooltip:
+            Tooltip(self.entry, tooltip)
+
+    def _browse(self):
+        path = filedialog.askdirectory()
+        if path:
+            self.var.set(path)
+
+    def get(self):
+        return self.var.get()
+
+    def set(self, value):
+        self.var.set(value)
+
+
 class LogOutput(tk.Frame):
     """Log output panel."""
     def __init__(self, parent):
@@ -301,7 +341,12 @@ class MainApplication(tk.Tk):
         self.trans_input = FileInput(files_frame, "Translation (.txt / .srt)", "Penis.txt",
                                      [("Text files", "*.txt"), ("SRT files", "*.srt"), ("All", "*.*")],
                                      tooltip="Translated text file (numbered format)")
-        self.trans_input.pack(fill="x", padx=15, pady=(5, 10))
+        self.trans_input.pack(fill="x", padx=15, pady=5)
+
+        # Output directory
+        self.output_dir = DirInput(files_frame, "Output Directory", str(SCRIPT_DIR),
+                                   tooltip="Directory where output files will be saved")
+        self.output_dir.pack(fill="x", padx=15, pady=(5, 10))
 
         # === PROCESS SECTION ===
         process_frame = tk.Frame(main, bg=Theme.BG_SECONDARY)
@@ -370,6 +415,7 @@ class MainApplication(tk.Tk):
             'VST_VIDEO_INPUT': self.video_input.get(),
             'VST_SRT_INPUT': self.srt_input.get(),
             'VST_TRANSLATION': self.trans_input.get(),
+            'VST_OUTPUT_DIR': self.output_dir.get(),
         }
 
     def _start_selected(self):
@@ -406,6 +452,7 @@ class MainApplication(tk.Tk):
         self.log_output.log(f"Video: {env_vars['VST_VIDEO_INPUT']}", "info")
         self.log_output.log(f"SRT: {env_vars['VST_SRT_INPUT']}", "info")
         self.log_output.log(f"Translation: {env_vars['VST_TRANSLATION']}", "info")
+        self.log_output.log(f"Output Dir: {env_vars['VST_OUTPUT_DIR']}", "info")
 
         def run():
             try:
@@ -419,16 +466,32 @@ class MainApplication(tk.Tk):
                     cwd=str(SCRIPT_DIR),
                     env=env,
                     stdout=subprocess.PIPE,
-                    stderr=subprocess.STDOUT,
+                    stderr=subprocess.PIPE,
                     text=True,
                     bufsize=1
                 )
                 self.running_process = process
 
-                for line in process.stdout:
-                    line = line.rstrip()
-                    if line:
-                        self.msg_queue.put(("log", line))
+                # Read stdout and stderr in separate threads
+                def read_stdout():
+                    for line in process.stdout:
+                        line = line.rstrip()
+                        if line:
+                            self.msg_queue.put(("log", line))
+
+                def read_stderr():
+                    for line in process.stderr:
+                        line = line.rstrip()
+                        if line:
+                            self.msg_queue.put(("error", line))
+
+                import threading as th
+                t1 = th.Thread(target=read_stdout, daemon=True)
+                t2 = th.Thread(target=read_stderr, daemon=True)
+                t1.start()
+                t2.start()
+                t1.join()
+                t2.join()
 
                 process.wait()
                 self.msg_queue.put(("done", process.returncode == 0))
@@ -476,14 +539,29 @@ class MainApplication(tk.Tk):
                     cwd=str(SCRIPT_DIR),
                     env=env,
                     stdout=subprocess.PIPE,
-                    stderr=subprocess.STDOUT,
+                    stderr=subprocess.PIPE,
                     text=True,
                     bufsize=1
                 )
 
-                for line in process.stdout:
-                    if line.strip():
-                        self.msg_queue.put(("log", line.rstrip()))
+                # Read stdout and stderr
+                def read_out():
+                    for line in process.stdout:
+                        if line.strip():
+                            self.msg_queue.put(("log", line.rstrip()))
+
+                def read_err():
+                    for line in process.stderr:
+                        if line.strip():
+                            self.msg_queue.put(("error", line.rstrip()))
+
+                import threading as th
+                t1 = th.Thread(target=read_out, daemon=True)
+                t2 = th.Thread(target=read_err, daemon=True)
+                t1.start()
+                t2.start()
+                t1.join()
+                t2.join()
 
                 process.wait()
                 if process.returncode != 0:
@@ -507,6 +585,8 @@ class MainApplication(tk.Tk):
                     elif "✓" in data or "✅" in data or "done" in data.lower():
                         tag = "success"
                     self.log_output.log(data, tag)
+                elif msg_type == "error":
+                    self.log_output.log(f"[ERR] {data}", "error")
                 elif msg_type == "status":
                     self.status_label.config(text=data, fg=Theme.WARNING)
                 elif msg_type == "done":
