@@ -62,11 +62,71 @@ class Theme:
     FONT_MONO = ("Consolas", 9)
 
 
+class Tooltip:
+    """Modern tooltip that appears on hover."""
+
+    def __init__(self, widget, text, delay=500):
+        self.widget = widget
+        self.text = text
+        self.delay = delay
+        self.tooltip_window = None
+        self.scheduled = None
+
+        widget.bind("<Enter>", self._on_enter)
+        widget.bind("<Leave>", self._on_leave)
+        widget.bind("<Button-1>", self._on_leave)
+
+    def _on_enter(self, event=None):
+        self._cancel()
+        self.scheduled = self.widget.after(self.delay, self._show)
+
+    def _on_leave(self, event=None):
+        self._cancel()
+        self._hide()
+
+    def _cancel(self):
+        if self.scheduled:
+            self.widget.after_cancel(self.scheduled)
+            self.scheduled = None
+
+    def _show(self):
+        if self.tooltip_window:
+            return
+
+        x = self.widget.winfo_rootx() + 10
+        y = self.widget.winfo_rooty() + self.widget.winfo_height() + 5
+
+        self.tooltip_window = tw = tk.Toplevel(self.widget)
+        tw.wm_overrideredirect(True)
+        tw.wm_geometry(f"+{x}+{y}")
+        tw.configure(bg=Theme.BG_CARD)
+
+        # Tooltip frame with border
+        frame = tk.Frame(tw, bg=Theme.ACCENT, padx=1, pady=1)
+        frame.pack()
+
+        label = tk.Label(
+            frame, text=self.text,
+            font=Theme.FONT_SMALL,
+            fg=Theme.TEXT,
+            bg=Theme.BG_CARD,
+            padx=8, pady=4,
+            wraplength=300,
+            justify="left"
+        )
+        label.pack()
+
+    def _hide(self):
+        if self.tooltip_window:
+            self.tooltip_window.destroy()
+            self.tooltip_window = None
+
+
 class StyledButton(tk.Canvas):
     """Modern styled button with hover effects."""
 
     def __init__(self, parent, text, command=None, width=140, height=36,
-                 accent=False, icon=None):
+                 accent=False, icon=None, tooltip=None):
         super().__init__(parent, width=width, height=height,
                         bg=Theme.BG_SECONDARY, highlightthickness=0)
 
@@ -78,12 +138,17 @@ class StyledButton(tk.Canvas):
         self.icon = icon
         self.hovered = False
         self.disabled = False
+        self.tooltip_obj = None
 
         self.bind("<Enter>", self._on_enter)
         self.bind("<Leave>", self._on_leave)
         self.bind("<Button-1>", self._on_click)
 
         self._draw()
+
+        # Add tooltip if provided
+        if tooltip:
+            self.tooltip_obj = Tooltip(self, tooltip)
 
     def _draw(self):
         self.delete("all")
@@ -196,9 +261,9 @@ class FileSelector(tk.Frame):
 
 
 class LabeledDropdown(tk.Frame):
-    """Dropdown with label above."""
+    """Dropdown with label above and optional tooltip."""
 
-    def __init__(self, parent, label, values, default=None):
+    def __init__(self, parent, label, values, default=None, tooltip=None):
         super().__init__(parent, bg=Theme.BG_SECONDARY)
 
         # Label
@@ -227,6 +292,9 @@ class LabeledDropdown(tk.Frame):
         )
         self.combo.pack(fill="x")
 
+        if tooltip:
+            Tooltip(self.combo, tooltip)
+
     def get(self):
         return self.var.get()
 
@@ -235,9 +303,9 @@ class LabeledDropdown(tk.Frame):
 
 
 class CheckOption(tk.Frame):
-    """Styled checkbox option."""
+    """Styled checkbox option with optional tooltip."""
 
-    def __init__(self, parent, text, default=False):
+    def __init__(self, parent, text, default=False, tooltip=None):
         super().__init__(parent, bg=Theme.BG_SECONDARY)
 
         self.var = tk.BooleanVar(value=default)
@@ -254,6 +322,9 @@ class CheckOption(tk.Frame):
             highlightthickness=0
         )
         self.check.pack(anchor="w")
+
+        if tooltip:
+            Tooltip(self.check, tooltip)
 
     def get(self):
         return self.var.get()
@@ -446,7 +517,12 @@ class MainApplication(tk.Tk):
             row1, "CHOOSE PROCESS",
             ["1. Transcribe Audio", "2. Export to Text",
              "3. Merge Translation", "4. Adjust Video Speed"],
-            "1. Transcribe Audio"
+            "1. Transcribe Audio",
+            tooltip="Select which processing step to run:\n"
+                    "1. Transcribe: Audio → English SRT\n"
+                    "2. Export: SRT → Text for translation\n"
+                    "3. Merge: Timings + Translation → SRT\n"
+                    "4. Adjust: Slow video for CPS <18"
         )
         self.process_dropdown.pack(side="left", padx=(0, 20))
 
@@ -454,10 +530,16 @@ class MainApplication(tk.Tk):
         check_frame = tk.Frame(row1, bg=Theme.BG_SECONDARY)
         check_frame.pack(side="left", padx=20)
 
-        self.gpu_check = CheckOption(check_frame, "GPU Acceleration", True)
+        self.gpu_check = CheckOption(
+            check_frame, "GPU Acceleration", True,
+            tooltip="Use NVIDIA GPU for faster processing\n(Requires CUDA-compatible GPU)"
+        )
         self.gpu_check.pack(anchor="w")
 
-        self.auto_continue = CheckOption(check_frame, "Auto-continue Pipeline", False)
+        self.auto_continue = CheckOption(
+            check_frame, "Auto-continue Pipeline", False,
+            tooltip="Automatically continue to next step after completion"
+        )
         self.auto_continue.pack(anchor="w")
 
         # === ACTION BUTTONS ===
@@ -473,36 +555,54 @@ class MainApplication(tk.Tk):
         btn_row1 = tk.Frame(action_frame, bg=Theme.BG_SECONDARY)
         btn_row1.pack(pady=5)
 
-        self.btn_transcribe = StyledButton(btn_row1, "Transcribe",
-                                           lambda: self._run_script("run_canary.py", "Transcribing..."),
-                                           width=130)
+        self.btn_transcribe = StyledButton(
+            btn_row1, "Transcribe",
+            lambda: self._run_script("run_canary.py", "Transcribing..."),
+            width=130,
+            tooltip="Convert audio to English subtitles using AI\n(Requires: input.mp3, NVIDIA GPU)"
+        )
         self.btn_transcribe.pack(side="left", padx=5)
 
-        self.btn_export = StyledButton(btn_row1, "Export Text",
-                                       lambda: self._run_script("srt.py", "Exporting..."),
-                                       width=130)
+        self.btn_export = StyledButton(
+            btn_row1, "Export Text",
+            lambda: self._run_script("srt.py", "Exporting..."),
+            width=130,
+            tooltip="Convert SRT to numbered text for translation\n(input.srt → output.txt)"
+        )
         self.btn_export.pack(side="left", padx=5)
 
-        self.btn_merge = StyledButton(btn_row1, "Merge",
-                                      lambda: self._run_script("text_to_srt.py", "Merging..."),
-                                      width=130)
+        self.btn_merge = StyledButton(
+            btn_row1, "Merge",
+            lambda: self._run_script("text_to_srt.py", "Merging..."),
+            width=130,
+            tooltip="Combine original timings with translated text\n(output.srt + Penis.txt → result.srt)"
+        )
         self.btn_merge.pack(side="left", padx=5)
 
-        self.btn_adjust = StyledButton(btn_row1, "Adjust Video",
-                                       lambda: self._run_script("video_speed_adjuster_v3.py", "Adjusting..."),
-                                       width=130)
+        self.btn_adjust = StyledButton(
+            btn_row1, "Adjust Video",
+            lambda: self._run_script("video_speed_adjuster_v3.py", "Adjusting..."),
+            width=130,
+            tooltip="Slow down video to match translation CPS\nTarget: <18 CPS for Aegisub compatibility"
+        )
         self.btn_adjust.pack(side="left", padx=5)
 
         # Main action button
         btn_row2 = tk.Frame(action_frame, bg=Theme.BG_SECONDARY)
         btn_row2.pack(pady=(15, 10))
 
-        self.btn_start = StyledButton(btn_row2, "▶  Start Processing",
-                                      self._start_selected, width=250, height=45, accent=True)
+        self.btn_start = StyledButton(
+            btn_row2, "▶  Start Processing",
+            self._start_selected, width=250, height=45, accent=True,
+            tooltip="Run the selected process from dropdown above"
+        )
         self.btn_start.pack(side="left", padx=5)
 
-        self.btn_pipeline = StyledButton(btn_row2, "Full Pipeline",
-                                         self._run_full_pipeline, width=150, height=45)
+        self.btn_pipeline = StyledButton(
+            btn_row2, "Full Pipeline",
+            self._run_full_pipeline, width=150, height=45,
+            tooltip="Run Transcribe → Export in sequence\nAfter completion, translate output.txt to Penis.txt"
+        )
         self.btn_pipeline.pack(side="left", padx=5)
 
         # Progress bar

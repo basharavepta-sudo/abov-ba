@@ -30,7 +30,8 @@ import threading
 from typing import List, Dict, Tuple, Optional, Any
 
 # --- CONFIGURATION ---
-TARGET_CPS = 18.0           # Target Characters Per Second (Aegisub standard)
+TARGET_CPS = 17.0           # Target CPS (below 18 for Aegisub safety margin)
+MAX_CPS = 18.0              # Aegisub limit - we stay below this
 MIN_SPEED = 0.4             # Минимальная скорость (макс. замедление 2.5x)
 MAX_SPEED = 2.0             # Максимальная скорость (макс. ускорение 2x)
 MERGE_THRESHOLD = 0.02      # Порог для слияния сегментов (разница скоростей)
@@ -212,17 +213,20 @@ def calculate_speed(orig_text: str, trans_text: str, duration_ms: int = 0) -> fl
         # Current CPS with translated text
         current_cps = trans_len / duration_sec if duration_sec > 0 else TARGET_CPS
 
-        if current_cps <= TARGET_CPS:
-            # Already within acceptable CPS, no change needed
+        if current_cps < MAX_CPS:
+            # Already below Aegisub limit, no change needed
             return 1.0
 
-        # Calculate required duration for TARGET_CPS
+        # Calculate required duration for TARGET_CPS (17, giving margin below 18)
         required_duration = trans_len / TARGET_CPS
 
         # Speed factor (>1 = slow down, <1 = speed up)
         speed = required_duration / duration_sec
 
-        safe_print(f"    CPS: {current_cps:.1f} → {TARGET_CPS:.1f} | Speed: {speed:.2f}x | \"{trans_text[:30]}...\"")
+        # Calculate resulting CPS for logging
+        result_cps = trans_len / required_duration
+
+        safe_print(f"    CPS: {current_cps:.1f} → {result_cps:.1f} | Speed: {speed:.2f}x | \"{trans_text[:30]}...\"")
 
         return max(MIN_SPEED, min(MAX_SPEED, speed))
 
@@ -521,7 +525,7 @@ def main():
     print("\n" + "=" * 65)
     print("  🎬 VIDEO SPEED ADJUSTER v4.0 (CPS-Based)")
     print("=" * 65)
-    print(f"  📊 Target CPS: {TARGET_CPS} (Aegisub compatible)")
+    print(f"  📊 Target CPS: {TARGET_CPS} (always below {MAX_CPS} for Aegisub)")
     print(f"  ⚡ Speed range: {MIN_SPEED}x - {MAX_SPEED}x")
     print("=" * 65)
 
