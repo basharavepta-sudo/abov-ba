@@ -16,8 +16,17 @@ from datetime import datetime
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox, scrolledtext
 
-# Script directory
-SCRIPT_DIR = Path(__file__).parent.resolve()
+# Detect if running as PyInstaller bundle
+if getattr(sys, 'frozen', False):
+    # Running as compiled executable
+    BUNDLE_DIR = Path(sys._MEIPASS)  # Temp dir with bundled files
+    SCRIPT_DIR = Path(sys.executable).parent.resolve()  # Dir containing .exe
+    IS_FROZEN = True
+else:
+    # Running as normal Python script
+    BUNDLE_DIR = Path(__file__).parent.resolve()
+    SCRIPT_DIR = BUNDLE_DIR
+    IS_FROZEN = False
 
 
 class ModernStyle:
@@ -542,10 +551,14 @@ class MainApplication(tk.Tk):
         if self.is_running:
             return
 
-        script_path = SCRIPT_DIR / script_name
+        # Scripts are bundled in BUNDLE_DIR, but work on files in SCRIPT_DIR
+        script_path = BUNDLE_DIR / script_name
         if not script_path.exists():
-            self.log_panel.log(f"Script not found: {script_name}", "error")
-            return
+            # Fallback to SCRIPT_DIR
+            script_path = SCRIPT_DIR / script_name
+            if not script_path.exists():
+                self.log_panel.log(f"Script not found: {script_name}", "error")
+                return
 
         self.set_buttons_state(True)
         self.progress_panel.start(status_message)
@@ -553,8 +566,10 @@ class MainApplication(tk.Tk):
 
         def run():
             try:
+                # Use bundled Python or system Python
+                python_exe = sys.executable if not IS_FROZEN else "python"
                 process = subprocess.Popen(
-                    [sys.executable, "-u", str(script_path)],
+                    [python_exe, "-u", str(script_path)],
                     cwd=str(SCRIPT_DIR),
                     stdout=subprocess.PIPE,
                     stderr=subprocess.STDOUT,
@@ -603,8 +618,14 @@ class MainApplication(tk.Tk):
                 self.msg_queue.put(("status", msg))
                 self.msg_queue.put(("log", f"\n=== {msg} ==="))
 
+                # Find script path (bundled or local)
+                script_path = BUNDLE_DIR / script
+                if not script_path.exists():
+                    script_path = SCRIPT_DIR / script
+
+                python_exe = sys.executable if not IS_FROZEN else "python"
                 process = subprocess.Popen(
-                    [sys.executable, "-u", str(SCRIPT_DIR / script)],
+                    [python_exe, "-u", str(script_path)],
                     cwd=str(SCRIPT_DIR),
                     stdout=subprocess.PIPE,
                     stderr=subprocess.STDOUT,
@@ -659,8 +680,14 @@ class MainApplication(tk.Tk):
                 self.msg_queue.put(("status", msg))
                 self.msg_queue.put(("log", f"\n=== {msg} ==="))
 
+                # Find script path (bundled or local)
+                script_path = BUNDLE_DIR / script
+                if not script_path.exists():
+                    script_path = SCRIPT_DIR / script
+
+                python_exe = sys.executable if not IS_FROZEN else "python"
                 process = subprocess.Popen(
-                    [sys.executable, "-u", str(SCRIPT_DIR / script)],
+                    [python_exe, "-u", str(script_path)],
                     cwd=str(SCRIPT_DIR),
                     stdout=subprocess.PIPE,
                     stderr=subprocess.STDOUT,

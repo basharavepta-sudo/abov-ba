@@ -1,0 +1,15 @@
+# Video Subtitle Toolkit - Requirements
+# ======================================
+
+# Build tools
+pyinstaller>=6.0
+
+# For video processing (video_speed_adjuster_v3.py)
+# Note: ffmpeg must be installed separately (not a Python package)
+
+# For ASR transcription (run_canary.py) - OPTIONAL, heavy dependencies
+# Uncomment these if you need transcription functionality:
+# torch>=2.0
+# numpy>=1.24
+# soundfile>=0.12
+# nemo_toolkit[asr]>=1.20
