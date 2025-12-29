@@ -29,30 +29,20 @@ else:
 
 class Theme:
     """Modern dark theme with teal accents (UVR5 style)."""
-
-    # Main colors
     BG_DARK = "#0d1117"
     BG_SECONDARY = "#161b22"
     BG_CARD = "#1c2128"
     BG_INPUT = "#0d1117"
     BG_BUTTON = "#21262d"
-
-    # Accent colors
     ACCENT = "#00d4aa"
     ACCENT_DARK = "#00a080"
     ACCENT_GLOW = "#00ffcc"
-
-    # Text colors
     TEXT = "#e6edf3"
     TEXT_DIM = "#7d8590"
     TEXT_LABEL = "#8b949e"
-
-    # Status colors
     SUCCESS = "#3fb950"
     WARNING = "#d29922"
     ERROR = "#f85149"
-
-    # Fonts
     FONT_LOGO = ("Segoe UI", 28, "bold")
     FONT_SUBTITLE = ("Segoe UI", 10)
     FONT_LABEL = ("Segoe UI", 9)
@@ -64,14 +54,12 @@ class Theme:
 
 class Tooltip:
     """Modern tooltip that appears on hover."""
-
     def __init__(self, widget, text, delay=500):
         self.widget = widget
         self.text = text
         self.delay = delay
         self.tooltip_window = None
         self.scheduled = None
-
         widget.bind("<Enter>", self._on_enter)
         widget.bind("<Leave>", self._on_leave)
         widget.bind("<Button-1>", self._on_leave)
@@ -92,28 +80,17 @@ class Tooltip:
     def _show(self):
         if self.tooltip_window:
             return
-
         x = self.widget.winfo_rootx() + 10
         y = self.widget.winfo_rooty() + self.widget.winfo_height() + 5
-
         self.tooltip_window = tw = tk.Toplevel(self.widget)
         tw.wm_overrideredirect(True)
         tw.wm_geometry(f"+{x}+{y}")
         tw.configure(bg=Theme.BG_CARD)
-
-        # Tooltip frame with border
         frame = tk.Frame(tw, bg=Theme.ACCENT, padx=1, pady=1)
         frame.pack()
-
-        label = tk.Label(
-            frame, text=self.text,
-            font=Theme.FONT_SMALL,
-            fg=Theme.TEXT,
-            bg=Theme.BG_CARD,
-            padx=8, pady=4,
-            wraplength=300,
-            justify="left"
-        )
+        label = tk.Label(frame, text=self.text, font=Theme.FONT_SMALL,
+                        fg=Theme.TEXT, bg=Theme.BG_CARD, padx=8, pady=4,
+                        wraplength=300, justify="left")
         label.pack()
 
     def _hide(self):
@@ -124,68 +101,47 @@ class Tooltip:
 
 class StyledButton(tk.Canvas):
     """Modern styled button with hover effects."""
-
     def __init__(self, parent, text, command=None, width=140, height=36,
-                 accent=False, icon=None, tooltip=None):
+                 accent=False, tooltip=None):
         super().__init__(parent, width=width, height=height,
                         bg=Theme.BG_SECONDARY, highlightthickness=0)
-
         self.text = text
         self.command = command
         self.width = width
         self.height = height
         self.accent = accent
-        self.icon = icon
         self.hovered = False
         self.disabled = False
-        self.tooltip_obj = None
-
         self.bind("<Enter>", self._on_enter)
         self.bind("<Leave>", self._on_leave)
         self.bind("<Button-1>", self._on_click)
-
         self._draw()
-
-        # Add tooltip if provided
         if tooltip:
-            self.tooltip_obj = Tooltip(self, tooltip)
+            Tooltip(self, tooltip)
 
     def _draw(self):
         self.delete("all")
-
         if self.disabled:
-            bg = Theme.BG_CARD
-            fg = Theme.TEXT_DIM
-            border = Theme.BG_CARD
+            bg, fg, border = Theme.BG_CARD, Theme.TEXT_DIM, Theme.BG_CARD
         elif self.accent:
             bg = Theme.ACCENT if not self.hovered else Theme.ACCENT_GLOW
-            fg = Theme.BG_DARK
-            border = bg
+            fg, border = Theme.BG_DARK, bg
         else:
             bg = Theme.BG_BUTTON if not self.hovered else "#30363d"
             fg = Theme.TEXT
             border = "#30363d" if not self.hovered else Theme.ACCENT
-
-        # Draw rounded rectangle
         r = 6
-        self.create_rounded_rect(2, 2, self.width-2, self.height-2, r, bg, border)
-
-        # Draw text
+        self._rounded_rect(2, 2, self.width-2, self.height-2, r, bg, border)
         self.create_text(self.width//2, self.height//2, text=self.text,
                         font=Theme.FONT_NORMAL, fill=fg)
 
-    def create_rounded_rect(self, x1, y1, x2, y2, r, fill, outline):
-        """Draw a rounded rectangle."""
+    def _rounded_rect(self, x1, y1, x2, y2, r, fill, outline):
         self.create_arc(x1, y1, x1+2*r, y1+2*r, start=90, extent=90, fill=fill, outline=outline)
         self.create_arc(x2-2*r, y1, x2, y1+2*r, start=0, extent=90, fill=fill, outline=outline)
         self.create_arc(x1, y2-2*r, x1+2*r, y2, start=180, extent=90, fill=fill, outline=outline)
         self.create_arc(x2-2*r, y2-2*r, x2, y2, start=270, extent=90, fill=fill, outline=outline)
         self.create_rectangle(x1+r, y1, x2-r, y2, fill=fill, outline="")
         self.create_rectangle(x1, y1+r, x2, y2-r, fill=fill, outline="")
-        self.create_line(x1+r, y1, x2-r, y1, fill=outline)
-        self.create_line(x1+r, y2, x2-r, y2, fill=outline)
-        self.create_line(x1, y1+r, x1, y2-r, fill=outline)
-        self.create_line(x2, y1+r, x2, y2-r, fill=outline)
 
     def _on_enter(self, e):
         if not self.disabled:
@@ -205,95 +161,39 @@ class StyledButton(tk.Canvas):
         self._draw()
 
 
-class FileSelector(tk.Frame):
-    """File/folder selector with button and entry."""
-
-    def __init__(self, parent, label, is_folder=False, file_types=None):
+class FileInput(tk.Frame):
+    """File input with label, entry and browse button."""
+    def __init__(self, parent, label, default="", file_types=None, tooltip=None):
         super().__init__(parent, bg=Theme.BG_SECONDARY)
-
-        self.is_folder = is_folder
         self.file_types = file_types or [("All files", "*.*")]
-        self.path_var = tk.StringVar()
-
-        # Button
-        self.btn = StyledButton(self, label, self._browse, width=120)
-        self.btn.pack(side="left", padx=(0, 10))
-
-        # Entry
-        self.entry = tk.Entry(
-            self, textvariable=self.path_var,
-            font=Theme.FONT_NORMAL,
-            bg=Theme.BG_INPUT,
-            fg=Theme.TEXT,
-            insertbackground=Theme.TEXT,
-            relief="flat",
-            highlightthickness=1,
-            highlightbackground=Theme.BG_CARD,
-            highlightcolor=Theme.ACCENT
-        )
-        self.entry.pack(side="left", fill="x", expand=True, ipady=8)
-
-        # Browse icon button
-        self.icon_btn = tk.Label(
-            self, text="📁", font=("Segoe UI", 14),
-            bg=Theme.BG_SECONDARY, fg=Theme.TEXT_DIM,
-            cursor="hand2"
-        )
-        self.icon_btn.pack(side="right", padx=(10, 0))
-        self.icon_btn.bind("<Button-1>", lambda e: self._browse())
-
-    def _browse(self):
-        if self.is_folder:
-            path = filedialog.askdirectory(initialdir=SCRIPT_DIR)
-        else:
-            path = filedialog.askopenfilename(
-                initialdir=SCRIPT_DIR,
-                filetypes=self.file_types
-            )
-        if path:
-            self.path_var.set(path)
-
-    def get(self):
-        return self.path_var.get()
-
-    def set(self, value):
-        self.path_var.set(value)
-
-
-class LabeledDropdown(tk.Frame):
-    """Dropdown with label above and optional tooltip."""
-
-    def __init__(self, parent, label, values, default=None, tooltip=None):
-        super().__init__(parent, bg=Theme.BG_SECONDARY)
 
         # Label
-        tk.Label(
-            self, text=label,
-            font=Theme.FONT_LABEL,
-            fg=Theme.TEXT_LABEL,
-            bg=Theme.BG_SECONDARY
-        ).pack(anchor="w", pady=(0, 5))
+        tk.Label(self, text=label, font=Theme.FONT_LABEL,
+                fg=Theme.TEXT_LABEL, bg=Theme.BG_SECONDARY).pack(anchor="w", pady=(0, 3))
 
-        # Combobox
-        self.var = tk.StringVar(value=default or (values[0] if values else ""))
+        # Entry frame
+        entry_frame = tk.Frame(self, bg=Theme.BG_SECONDARY)
+        entry_frame.pack(fill="x")
 
-        style = ttk.Style()
-        style.configure("Custom.TCombobox",
-                       fieldbackground=Theme.BG_INPUT,
-                       background=Theme.BG_BUTTON,
-                       foreground=Theme.TEXT)
+        # Entry
+        self.var = tk.StringVar(value=default)
+        self.entry = tk.Entry(entry_frame, textvariable=self.var, font=Theme.FONT_NORMAL,
+                             bg=Theme.BG_INPUT, fg=Theme.TEXT, insertbackground=Theme.TEXT,
+                             relief="flat", highlightthickness=1,
+                             highlightbackground=Theme.BG_CARD, highlightcolor=Theme.ACCENT)
+        self.entry.pack(side="left", fill="x", expand=True, ipady=6)
 
-        self.combo = ttk.Combobox(
-            self, textvariable=self.var,
-            values=values,
-            state="readonly",
-            font=Theme.FONT_NORMAL,
-            width=20
-        )
-        self.combo.pack(fill="x")
+        # Browse button
+        self.browse_btn = StyledButton(entry_frame, "Browse", self._browse, width=80, height=32)
+        self.browse_btn.pack(side="right", padx=(10, 0))
 
         if tooltip:
-            Tooltip(self.combo, tooltip)
+            Tooltip(self.entry, tooltip)
+
+    def _browse(self):
+        path = filedialog.askopenfilename(filetypes=self.file_types)
+        if path:
+            self.var.set(path)
 
     def get(self):
         return self.var.get()
@@ -302,117 +202,26 @@ class LabeledDropdown(tk.Frame):
         self.var.set(value)
 
 
-class CheckOption(tk.Frame):
-    """Styled checkbox option with optional tooltip."""
-
-    def __init__(self, parent, text, default=False, tooltip=None):
-        super().__init__(parent, bg=Theme.BG_SECONDARY)
-
-        self.var = tk.BooleanVar(value=default)
-
-        self.check = tk.Checkbutton(
-            self, text=text,
-            variable=self.var,
-            font=Theme.FONT_NORMAL,
-            fg=Theme.TEXT,
-            bg=Theme.BG_SECONDARY,
-            activebackground=Theme.BG_SECONDARY,
-            activeforeground=Theme.TEXT,
-            selectcolor=Theme.BG_INPUT,
-            highlightthickness=0
-        )
-        self.check.pack(anchor="w")
-
-        if tooltip:
-            Tooltip(self.check, tooltip)
-
-    def get(self):
-        return self.var.get()
-
-
-class StatusBar(tk.Frame):
-    """Bottom status bar with file indicators."""
-
-    FILES = [
-        ("input.mp3", "Audio"),
-        ("input.mp4", "Video"),
-        ("output.srt", "SRT"),
-        ("Penis.txt", "Translation"),
-    ]
-
-    def __init__(self, parent):
-        super().__init__(parent, bg=Theme.BG_DARK)
-
-        self.indicators = {}
-
-        for filename, label in self.FILES:
-            frame = tk.Frame(self, bg=Theme.BG_DARK)
-            frame.pack(side="left", padx=15)
-
-            dot = tk.Label(frame, text="●", font=("Segoe UI", 10),
-                          fg=Theme.TEXT_DIM, bg=Theme.BG_DARK)
-            dot.pack(side="left")
-
-            lbl = tk.Label(frame, text=label, font=Theme.FONT_SMALL,
-                          fg=Theme.TEXT_DIM, bg=Theme.BG_DARK)
-            lbl.pack(side="left", padx=(5, 0))
-
-            self.indicators[filename] = dot
-
-        # Version label on right
-        self.version = tk.Label(
-            self, text=f"Video Subtitle Toolkit v1.0 [{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}]",
-            font=Theme.FONT_SMALL,
-            fg=Theme.TEXT_DIM,
-            bg=Theme.BG_DARK
-        )
-        self.version.pack(side="right", padx=15)
-
-    def refresh(self):
-        for filename, dot in self.indicators.items():
-            if (SCRIPT_DIR / filename).exists():
-                dot.config(fg=Theme.SUCCESS)
-            else:
-                dot.config(fg=Theme.TEXT_DIM)
-
-
 class LogOutput(tk.Frame):
-    """Expandable log output panel."""
-
+    """Log output panel."""
     def __init__(self, parent):
         super().__init__(parent, bg=Theme.BG_CARD)
-
-        # Header with toggle
         header = tk.Frame(self, bg=Theme.BG_CARD)
         header.pack(fill="x", padx=15, pady=10)
-
         tk.Label(header, text="OUTPUT LOG", font=Theme.FONT_LABEL,
                 fg=Theme.TEXT_LABEL, bg=Theme.BG_CARD).pack(side="left")
+        clear_btn = tk.Label(header, text="Clear", font=Theme.FONT_SMALL,
+                            fg=Theme.ACCENT, bg=Theme.BG_CARD, cursor="hand2")
+        clear_btn.pack(side="right")
+        clear_btn.bind("<Button-1>", lambda e: self.clear())
 
-        self.clear_btn = tk.Label(header, text="Clear", font=Theme.FONT_SMALL,
-                                  fg=Theme.ACCENT, bg=Theme.BG_CARD, cursor="hand2")
-        self.clear_btn.pack(side="right")
-        self.clear_btn.bind("<Button-1>", lambda e: self.clear())
-
-        # Text widget
-        self.text = tk.Text(
-            self, font=Theme.FONT_MONO,
-            bg=Theme.BG_INPUT,
-            fg=Theme.TEXT,
-            insertbackground=Theme.TEXT,
-            relief="flat",
-            height=8,
-            padx=10,
-            pady=10
-        )
+        self.text = tk.Text(self, font=Theme.FONT_MONO, bg=Theme.BG_INPUT,
+                           fg=Theme.TEXT, insertbackground=Theme.TEXT,
+                           relief="flat", height=10, padx=10, pady=10)
         self.text.pack(fill="both", expand=True, padx=15, pady=(0, 15))
-
-        # Scrollbar
         scrollbar = tk.Scrollbar(self.text, command=self.text.yview)
         scrollbar.pack(side="right", fill="y")
         self.text.config(yscrollcommand=scrollbar.set)
-
-        # Tags
         self.text.tag_config("error", foreground=Theme.ERROR)
         self.text.tag_config("success", foreground=Theme.SUCCESS)
         self.text.tag_config("info", foreground=Theme.TEXT_DIM)
@@ -427,212 +236,145 @@ class LogOutput(tk.Frame):
 
 class MainApplication(tk.Tk):
     """Main application window."""
-
     def __init__(self):
         super().__init__()
-
         self.title("Video Subtitle Toolkit")
-        self.geometry("800x700")
-        self.minsize(700, 600)
+        self.geometry("900x750")
+        self.minsize(800, 650)
         self.configure(bg=Theme.BG_DARK)
-
-        # Configure ttk styles
         self._setup_styles()
-
-        # State
         self.msg_queue = queue.Queue()
         self.is_running = False
         self.running_process = None
-
         self._create_ui()
         self._check_queue()
-        self.status_bar.refresh()
 
     def _setup_styles(self):
         style = ttk.Style()
         style.theme_use('clam')
-
-        style.configure("TCombobox",
-                       fieldbackground=Theme.BG_INPUT,
-                       background=Theme.BG_BUTTON,
-                       foreground=Theme.TEXT,
-                       arrowcolor=Theme.TEXT)
-
-        style.map("TCombobox",
-                 fieldbackground=[("readonly", Theme.BG_INPUT)],
+        style.configure("TCombobox", fieldbackground=Theme.BG_INPUT,
+                       background=Theme.BG_BUTTON, foreground=Theme.TEXT, arrowcolor=Theme.TEXT)
+        style.map("TCombobox", fieldbackground=[("readonly", Theme.BG_INPUT)],
                  selectbackground=[("readonly", Theme.ACCENT)],
                  selectforeground=[("readonly", Theme.BG_DARK)])
-
         style.configure("Custom.Horizontal.TProgressbar",
-                       background=Theme.ACCENT,
-                       troughcolor=Theme.BG_INPUT)
+                       background=Theme.ACCENT, troughcolor=Theme.BG_INPUT)
 
     def _create_ui(self):
-        # Main container with padding
         main = tk.Frame(self, bg=Theme.BG_DARK)
         main.pack(fill="both", expand=True, padx=30, pady=20)
 
         # === HEADER ===
         header = tk.Frame(main, bg=Theme.BG_DARK)
-        header.pack(fill="x", pady=(0, 25))
-
-        # Logo
-        logo_frame = tk.Frame(header, bg=Theme.BG_DARK)
-        logo_frame.pack()
-
-        tk.Label(logo_frame, text="VST", font=Theme.FONT_LOGO,
+        header.pack(fill="x", pady=(0, 20))
+        tk.Label(header, text="VST", font=Theme.FONT_LOGO,
                 fg=Theme.ACCENT, bg=Theme.BG_DARK).pack()
-        tk.Label(logo_frame, text="VIDEO SUBTITLE TOOLKIT",
-                font=Theme.FONT_SUBTITLE, fg=Theme.TEXT_DIM,
-                bg=Theme.BG_DARK).pack()
+        tk.Label(header, text="VIDEO SUBTITLE TOOLKIT", font=Theme.FONT_SUBTITLE,
+                fg=Theme.TEXT_DIM, bg=Theme.BG_DARK).pack()
 
-        # === INPUT/OUTPUT SECTION ===
-        io_frame = tk.Frame(main, bg=Theme.BG_SECONDARY)
-        io_frame.pack(fill="x", pady=(0, 15), ipady=15, ipadx=15)
+        # === FILES SECTION ===
+        files_frame = tk.Frame(main, bg=Theme.BG_SECONDARY)
+        files_frame.pack(fill="x", pady=(0, 15), ipady=10)
 
-        # Working directory display
-        dir_frame = tk.Frame(io_frame, bg=Theme.BG_SECONDARY)
-        dir_frame.pack(fill="x", padx=15, pady=(15, 10))
+        tk.Label(files_frame, text="FILES", font=Theme.FONT_LABEL,
+                fg=Theme.TEXT_LABEL, bg=Theme.BG_SECONDARY).pack(anchor="w", padx=15, pady=(10, 5))
 
-        tk.Label(dir_frame, text="WORKING DIRECTORY", font=Theme.FONT_LABEL,
-                fg=Theme.TEXT_LABEL, bg=Theme.BG_SECONDARY).pack(anchor="w")
+        # Audio input
+        self.audio_input = FileInput(files_frame, "Audio Input (.mp3)", "input.mp3",
+                                     [("MP3 files", "*.mp3"), ("WAV files", "*.wav"), ("All", "*.*")],
+                                     tooltip="Audio file for transcription")
+        self.audio_input.pack(fill="x", padx=15, pady=5)
 
-        dir_entry = tk.Entry(dir_frame, font=Theme.FONT_NORMAL,
-                            bg=Theme.BG_INPUT, fg=Theme.TEXT,
-                            relief="flat", highlightthickness=1,
-                            highlightbackground=Theme.BG_CARD)
-        dir_entry.pack(fill="x", pady=(5, 0), ipady=8)
-        dir_entry.insert(0, str(SCRIPT_DIR))
-        dir_entry.config(state="readonly")
+        # Video input
+        self.video_input = FileInput(files_frame, "Video Input (.mp4)", "input.mp4",
+                                     [("MP4 files", "*.mp4"), ("All video", "*.mkv;*.avi"), ("All", "*.*")],
+                                     tooltip="Video file for speed adjustment")
+        self.video_input.pack(fill="x", padx=15, pady=5)
 
-        # === PROCESS OPTIONS ===
-        options_frame = tk.Frame(main, bg=Theme.BG_SECONDARY)
-        options_frame.pack(fill="x", pady=(0, 15), ipady=15, ipadx=15)
+        # SRT input
+        self.srt_input = FileInput(files_frame, "Original Subtitles (.srt)", "output.srt",
+                                   [("SRT files", "*.srt"), ("All", "*.*")],
+                                   tooltip="English subtitles from transcription")
+        self.srt_input.pack(fill="x", padx=15, pady=5)
 
-        # Row 1: Dropdowns
-        row1 = tk.Frame(options_frame, bg=Theme.BG_SECONDARY)
-        row1.pack(fill="x", padx=15, pady=(15, 10))
+        # Translation input
+        self.trans_input = FileInput(files_frame, "Translation (.txt / .srt)", "Penis.txt",
+                                     [("Text files", "*.txt"), ("SRT files", "*.srt"), ("All", "*.*")],
+                                     tooltip="Translated text file (numbered format)")
+        self.trans_input.pack(fill="x", padx=15, pady=(5, 10))
 
-        self.process_dropdown = LabeledDropdown(
-            row1, "CHOOSE PROCESS",
-            ["1. Transcribe Audio", "2. Export to Text",
-             "3. Merge Translation", "4. Adjust Video Speed"],
-            "1. Transcribe Audio",
-            tooltip="Select which processing step to run:\n"
-                    "1. Transcribe: Audio → English SRT\n"
-                    "2. Export: SRT → Text for translation\n"
-                    "3. Merge: Timings + Translation → SRT\n"
-                    "4. Adjust: Slow video for CPS <18"
-        )
-        self.process_dropdown.pack(side="left", padx=(0, 20))
+        # === PROCESS SECTION ===
+        process_frame = tk.Frame(main, bg=Theme.BG_SECONDARY)
+        process_frame.pack(fill="x", pady=(0, 15), ipady=10)
 
-        # Checkboxes
-        check_frame = tk.Frame(row1, bg=Theme.BG_SECONDARY)
-        check_frame.pack(side="left", padx=20)
+        tk.Label(process_frame, text="CHOOSE PROCESS", font=Theme.FONT_LABEL,
+                fg=Theme.TEXT_LABEL, bg=Theme.BG_SECONDARY).pack(anchor="w", padx=15, pady=(10, 5))
 
-        self.gpu_check = CheckOption(
-            check_frame, "GPU Acceleration", True,
-            tooltip="Use NVIDIA GPU for faster processing\n(Requires CUDA-compatible GPU)"
-        )
-        self.gpu_check.pack(anchor="w")
+        # Dropdown
+        self.process_var = tk.StringVar(value="4. Adjust Video Speed")
+        dropdown_frame = tk.Frame(process_frame, bg=Theme.BG_SECONDARY)
+        dropdown_frame.pack(fill="x", padx=15, pady=(0, 10))
 
-        self.auto_continue = CheckOption(
-            check_frame, "Auto-continue Pipeline", False,
-            tooltip="Automatically continue to next step after completion"
-        )
-        self.auto_continue.pack(anchor="w")
+        self.process_combo = ttk.Combobox(dropdown_frame, textvariable=self.process_var,
+                                          values=["1. Transcribe Audio", "2. Export to Text",
+                                                  "3. Merge Translation", "4. Adjust Video Speed"],
+                                          state="readonly", font=Theme.FONT_NORMAL, width=25)
+        self.process_combo.pack(side="left")
+        Tooltip(self.process_combo, "1. Audio→SRT\n2. SRT→Text\n3. Merge translation\n4. Adjust video CPS<18")
 
         # === ACTION BUTTONS ===
-        action_frame = tk.Frame(main, bg=Theme.BG_SECONDARY)
-        action_frame.pack(fill="x", pady=(0, 15), ipady=20, ipadx=15)
+        btn_frame = tk.Frame(main, bg=Theme.BG_SECONDARY)
+        btn_frame.pack(fill="x", pady=(0, 15), ipady=15)
 
-        # Quick action buttons
-        quick_label = tk.Label(action_frame, text="QUICK ACTIONS",
-                              font=Theme.FONT_LABEL, fg=Theme.TEXT_LABEL,
-                              bg=Theme.BG_SECONDARY)
-        quick_label.pack(pady=(15, 10))
+        btn_row = tk.Frame(btn_frame, bg=Theme.BG_SECONDARY)
+        btn_row.pack(pady=15)
 
-        btn_row1 = tk.Frame(action_frame, bg=Theme.BG_SECONDARY)
-        btn_row1.pack(pady=5)
+        self.btn_start = StyledButton(btn_row, "▶  Start Processing", self._start_selected,
+                                      width=220, height=45, accent=True,
+                                      tooltip="Run selected process with files above")
+        self.btn_start.pack(side="left", padx=10)
 
-        self.btn_transcribe = StyledButton(
-            btn_row1, "Transcribe",
-            lambda: self._run_script("run_canary.py", "Transcribing..."),
-            width=130,
-            tooltip="Convert audio to English subtitles using AI\n(Requires: input.mp3, NVIDIA GPU)"
-        )
-        self.btn_transcribe.pack(side="left", padx=5)
+        self.btn_pipeline = StyledButton(btn_row, "Full Pipeline", self._run_full_pipeline,
+                                         width=140, height=45,
+                                         tooltip="Run Transcribe → Export → Wait for translation")
+        self.btn_pipeline.pack(side="left", padx=10)
 
-        self.btn_export = StyledButton(
-            btn_row1, "Export Text",
-            lambda: self._run_script("srt.py", "Exporting..."),
-            width=130,
-            tooltip="Convert SRT to numbered text for translation\n(input.srt → output.txt)"
-        )
-        self.btn_export.pack(side="left", padx=5)
+        # Progress
+        self.progress = ttk.Progressbar(btn_frame, style="Custom.Horizontal.TProgressbar",
+                                        mode="indeterminate", length=450)
+        self.progress.pack(pady=(0, 5))
 
-        self.btn_merge = StyledButton(
-            btn_row1, "Merge",
-            lambda: self._run_script("text_to_srt.py", "Merging..."),
-            width=130,
-            tooltip="Combine original timings with translated text\n(output.srt + Penis.txt → result.srt)"
-        )
-        self.btn_merge.pack(side="left", padx=5)
-
-        self.btn_adjust = StyledButton(
-            btn_row1, "Adjust Video",
-            lambda: self._run_script("video_speed_adjuster_v3.py", "Adjusting..."),
-            width=130,
-            tooltip="Slow down video to match translation CPS\nTarget: <18 CPS for Aegisub compatibility"
-        )
-        self.btn_adjust.pack(side="left", padx=5)
-
-        # Main action button
-        btn_row2 = tk.Frame(action_frame, bg=Theme.BG_SECONDARY)
-        btn_row2.pack(pady=(15, 10))
-
-        self.btn_start = StyledButton(
-            btn_row2, "▶  Start Processing",
-            self._start_selected, width=250, height=45, accent=True,
-            tooltip="Run the selected process from dropdown above"
-        )
-        self.btn_start.pack(side="left", padx=5)
-
-        self.btn_pipeline = StyledButton(
-            btn_row2, "Full Pipeline",
-            self._run_full_pipeline, width=150, height=45,
-            tooltip="Run Transcribe → Export in sequence\nAfter completion, translate output.txt to Penis.txt"
-        )
-        self.btn_pipeline.pack(side="left", padx=5)
-
-        # Progress bar
-        self.progress = ttk.Progressbar(action_frame, style="Custom.Horizontal.TProgressbar",
-                                        mode="indeterminate", length=400)
-        self.progress.pack(pady=(10, 5))
-
-        self.status_label = tk.Label(action_frame, text="Ready",
-                                    font=Theme.FONT_NORMAL, fg=Theme.TEXT,
-                                    bg=Theme.BG_SECONDARY)
+        self.status_label = tk.Label(btn_frame, text="Ready", font=Theme.FONT_NORMAL,
+                                    fg=Theme.TEXT, bg=Theme.BG_SECONDARY)
         self.status_label.pack(pady=(0, 10))
 
         # === LOG OUTPUT ===
         self.log_output = LogOutput(main)
-        self.log_output.pack(fill="both", expand=True, pady=(0, 15))
+        self.log_output.pack(fill="both", expand=True)
 
         # === STATUS BAR ===
-        self.status_bar = StatusBar(main)
-        self.status_bar.pack(fill="x")
+        status_bar = tk.Frame(main, bg=Theme.BG_DARK)
+        status_bar.pack(fill="x", pady=(10, 0))
+        tk.Label(status_bar, text=f"Video Subtitle Toolkit v1.0 [{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}]",
+                font=Theme.FONT_SMALL, fg=Theme.TEXT_DIM, bg=Theme.BG_DARK).pack(side="right")
 
     def _set_buttons_disabled(self, disabled):
         self.is_running = disabled
-        for btn in [self.btn_transcribe, self.btn_export, self.btn_merge,
-                   self.btn_adjust, self.btn_start, self.btn_pipeline]:
-            btn.set_disabled(disabled)
+        self.btn_start.set_disabled(disabled)
+        self.btn_pipeline.set_disabled(disabled)
+
+    def _get_env_vars(self):
+        """Get environment variables with file paths."""
+        return {
+            'VST_AUDIO_INPUT': self.audio_input.get(),
+            'VST_VIDEO_INPUT': self.video_input.get(),
+            'VST_SRT_INPUT': self.srt_input.get(),
+            'VST_TRANSLATION': self.trans_input.get(),
+        }
 
     def _start_selected(self):
-        """Run the selected process from dropdown."""
-        selected = self.process_dropdown.get()
-
+        """Run the selected process."""
+        selected = self.process_var.get()
         if "Transcribe" in selected:
             self._run_script("run_canary.py", "Transcribing audio...")
         elif "Export" in selected:
@@ -640,19 +382,18 @@ class MainApplication(tk.Tk):
         elif "Merge" in selected:
             self._run_script("text_to_srt.py", "Merging translation...")
         elif "Adjust" in selected:
-            self._run_script("video_speed_adjuster_v3.py", "Adjusting video...")
+            self._run_script("video_speed_adjuster_v3.py", "Adjusting video speed...")
 
     def _run_script(self, script_name, status_msg):
-        """Run a script in background."""
+        """Run a script in background with environment variables."""
         if self.is_running:
             return
 
         script_path = BUNDLE_DIR / script_name
         if not script_path.exists():
             script_path = SCRIPT_DIR / script_name
-
         if not script_path.exists():
-            self.log_output.log(f"Script not found: {script_name}", "error")
+            self.log_output.log(f"ERROR: Script not found: {script_name}", "error")
             return
 
         self._set_buttons_disabled(True)
@@ -660,12 +401,23 @@ class MainApplication(tk.Tk):
         self.status_label.config(text=status_msg, fg=Theme.WARNING)
         self.log_output.log(f"\n=== {status_msg} ===", "info")
 
+        # Log file paths being used
+        env_vars = self._get_env_vars()
+        self.log_output.log(f"Video: {env_vars['VST_VIDEO_INPUT']}", "info")
+        self.log_output.log(f"SRT: {env_vars['VST_SRT_INPUT']}", "info")
+        self.log_output.log(f"Translation: {env_vars['VST_TRANSLATION']}", "info")
+
         def run():
             try:
+                # Merge environment variables
+                env = os.environ.copy()
+                env.update(self._get_env_vars())
+
                 python_exe = sys.executable if not IS_FROZEN else "python"
                 process = subprocess.Popen(
                     [python_exe, "-u", str(script_path)],
                     cwd=str(SCRIPT_DIR),
+                    env=env,
                     stdout=subprocess.PIPE,
                     stderr=subprocess.STDOUT,
                     text=True,
@@ -682,18 +434,19 @@ class MainApplication(tk.Tk):
                 self.msg_queue.put(("done", process.returncode == 0))
 
             except Exception as e:
-                self.msg_queue.put(("log", f"Error: {e}"))
+                self.msg_queue.put(("log", f"ERROR: {e}"))
                 self.msg_queue.put(("done", False))
 
         threading.Thread(target=run, daemon=True).start()
 
     def _run_full_pipeline(self):
-        """Run complete transcription + export pipeline."""
+        """Run transcription + export pipeline."""
         if self.is_running:
             return
 
-        if not (SCRIPT_DIR / "input.mp3").exists():
-            messagebox.showerror("Error", "input.mp3 not found!\n\nPlace your audio file in the working directory.")
+        audio_path = self.audio_input.get()
+        if not Path(audio_path).exists():
+            messagebox.showerror("Error", f"Audio file not found:\n{audio_path}")
             return
 
         self._set_buttons_disabled(True)
@@ -705,6 +458,9 @@ class MainApplication(tk.Tk):
                 ("run_canary.py", "Transcribing audio..."),
                 ("srt.py", "Exporting to text...")
             ]
+
+            env = os.environ.copy()
+            env.update(self._get_env_vars())
 
             for script, msg in scripts:
                 self.msg_queue.put(("status", msg))
@@ -718,6 +474,7 @@ class MainApplication(tk.Tk):
                 process = subprocess.Popen(
                     [python_exe, "-u", str(script_path)],
                     cwd=str(SCRIPT_DIR),
+                    env=env,
                     stdout=subprocess.PIPE,
                     stderr=subprocess.STDOUT,
                     text=True,
@@ -743,32 +500,25 @@ class MainApplication(tk.Tk):
         try:
             while True:
                 msg_type, data = self.msg_queue.get_nowait()
-
                 if msg_type == "log":
                     tag = None
                     if "error" in data.lower() or "❌" in data:
                         tag = "error"
-                    elif "✓" in data or "✅" in data:
+                    elif "✓" in data or "✅" in data or "done" in data.lower():
                         tag = "success"
                     self.log_output.log(data, tag)
-
                 elif msg_type == "status":
                     self.status_label.config(text=data, fg=Theme.WARNING)
-
                 elif msg_type == "done":
                     self.progress.stop()
                     if data:
                         self.status_label.config(text="Completed!", fg=Theme.SUCCESS)
                     else:
                         self.status_label.config(text="Failed!", fg=Theme.ERROR)
-
                     self._set_buttons_disabled(False)
-                    self.status_bar.refresh()
                     self.running_process = None
-
         except queue.Empty:
             pass
-
         self.after(100, self._check_queue)
 
     def on_closing(self):

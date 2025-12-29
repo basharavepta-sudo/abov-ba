@@ -514,13 +514,17 @@ def read_file_safe(path: Path) -> Optional[str]:
 def main():
     script_dir = Path(__file__).parent.resolve()
 
-    input_video = script_dir / 'input.mp4'
-    eng_srt_file = script_dir / 'output.srt'
-    rus_srt_file = script_dir / 'russian.srt'
-    rus_txt_file = script_dir / 'Penis.txt'
-    output_video = script_dir / 'output_adjusted.mp4'
-    output_srt = script_dir / 'adjusted.srt'
-    temp_dir = script_dir / 'temp_segments'
+    # Support paths from environment variables (set by GUI)
+    input_video = Path(os.environ.get('VST_VIDEO_INPUT', script_dir / 'input.mp4'))
+    eng_srt_file = Path(os.environ.get('VST_SRT_INPUT', script_dir / 'output.srt'))
+    rus_srt_file = Path(os.environ.get('VST_TRANSLATION', script_dir / 'russian.srt'))
+    rus_txt_file = Path(os.environ.get('VST_TRANSLATION', script_dir / 'Penis.txt'))
+
+    # Output files go to the same directory as input video
+    output_dir = input_video.parent
+    output_video = output_dir / 'output_adjusted.mp4'
+    output_srt = output_dir / 'adjusted.srt'
+    temp_dir = output_dir / 'temp_segments'
 
     print("\n" + "=" * 65)
     print("  🎬 VIDEO SPEED ADJUSTER v4.0 (CPS-Based)")
