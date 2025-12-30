@@ -134,10 +134,22 @@ def get_video_fps(video_path):
         fps_str = subprocess.run(cmd, capture_output=True, text=True).stdout.strip()
         if '/' in fps_str:
             num, den = fps_str.split('/')
-            return int(num) / int(den) if int(den) != 0 else 30.0
+            return float(num) / float(den) if float(den) != 0 else 30.0
         return float(fps_str) if fps_str else 30.0
     except:
         return 30.0
+
+
+def get_segment_duration(segment_path):
+    """Получает РЕАЛЬНУЮ длительность сегмента в мс через ffprobe"""
+    cmd = ['ffprobe', '-v', 'error', '-show_entries', 'format=duration',
+           '-of', 'default=noprint_wrappers=1:nokey=1', str(segment_path)]
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        duration = float(result.stdout.strip())
+        return int(duration * 1000)
+    except:
+        return 0
 
 
 def get_encoder():
@@ -198,8 +210,8 @@ def calculate_slowdown(text, duration_ms):
     return slowdown
 
 
-def render_segment(idx, start_ms, end_ms, slowdown, input_video, temp_dir, encoder, enc_opts, fps):
-    """Рендерит один сегмент видео"""
+def render_segment(idx, start_ms, end_ms, slowdown, input_video, temp_dir, encoder, enc_opts):
+    """Рендерит один сегмент видео с сохранением оригинального FPS"""
 
     start_sec = start_ms / 1000.0
     end_sec = end_ms / 1000.0
@@ -241,7 +253,6 @@ def render_segment(idx, start_ms, end_ms, slowdown, input_video, temp_dir, encod
         '-map', '[v]', '-map', '[a]',
         '-c:v', encoder, *enc_opts,
         '-c:a', 'aac', '-b:a', '128k',
-        '-r', str(int(fps)),
         '-avoid_negative_ts', 'make_zero',
         '-fflags', '+genpts',
         '-loglevel', 'error',
@@ -257,13 +268,22 @@ def render_segment(idx, start_ms, end_ms, slowdown, input_video, temp_dir, encod
         return None
 
     if output_file.exists() and output_file.stat().st_size > 0:
-        output_duration_ms = int(duration_sec * slowdown * 1000)
+        # Получаем РЕАЛЬНУЮ длительность сегмента через ffprobe
+        real_duration_ms = get_segment_duration(output_file)
+        expected_duration_ms = int(duration_sec * slowdown * 1000)
+
+        # Проверка расхождения
+        diff = abs(real_duration_ms - expected_duration_ms)
+        if diff > 100:  # > 100ms расхождение
+            log(f"  ⚠️ Seg {idx}: расхождение {diff}ms (ожидалось {expected_duration_ms}, реально {real_duration_ms})")
+
         label = "SLOW" if slowdown > 1.01 else "NORM"
-        log(f"  ✅ Seg {idx:03d} | {label} x{slowdown:.2f} | {duration_sec:.1f}s → {output_duration_ms/1000:.1f}s | {elapsed:.1f}s")
+        log(f"  ✅ Seg {idx:03d} | {label} x{slowdown:.2f} | {duration_sec:.1f}s → {real_duration_ms/1000:.1f}s | {elapsed:.1f}s")
         return {
             'idx': idx,
             'file': output_file,
-            'duration_ms': output_duration_ms
+            'duration_ms': real_duration_ms,  # РЕАЛЬНАЯ длительность!
+            'expected_ms': expected_duration_ms
         }
 
     return None
@@ -327,8 +347,7 @@ def main():
     # Инфо о видео
     video_duration = get_video_duration(input_video)
     fps = get_video_fps(input_video)
-    fps = max(24, min(60, round(fps)))
-    print(f"📼 Видео: {ms_to_time(video_duration)} @ {fps} FPS")
+    print(f"📼 Видео: {ms_to_time(video_duration)} @ {fps:.2f} FPS")
 
     encoder, enc_opts = get_encoder()
     print(f"🔧 Энкодер: {encoder}")
@@ -356,11 +375,16 @@ def main():
                 'text': ''
             })
 
-        # Сам субтитр
+        # Сам субтитр - обработка перекрытий
         if start < current_pos:
+            overlap = current_pos - start
+            log(f"  ⚠️ Sub {i+1}: перекрытие {overlap}ms, сдвигаем начало")
             start = current_pos
-        if start >= end:
-            continue
+
+        # Минимальная длительность сегмента 100ms
+        if end - start < 100:
+            log(f"  ⚠️ Sub {i+1}: слишком короткий ({end - start}ms), расширяем до 100ms")
+            end = start + 100
 
         duration = end - start
         slowdown = calculate_slowdown(rus_text, duration)
@@ -404,7 +428,7 @@ def main():
             future = executor.submit(
                 render_segment,
                 idx, seg['start'], seg['end'], seg['slowdown'],
-                input_video, temp_dir, encoder, enc_opts, fps
+                input_video, temp_dir, encoder, enc_opts
             )
             futures[future] = (idx, seg)
 
@@ -462,6 +486,39 @@ def main():
 
     output_srt.write_text('\n\n'.join(srt_lines), encoding='utf-8')
 
+    # === ВЕРИФИКАЦИЯ ВЫХОДНОГО ВИДЕО ===
+    print("🔍 Верификация...")
+
+    if not output_video.exists():
+        print("❌ ОШИБКА: Выходное видео не создано!")
+        sys.exit(1)
+
+    real_output_duration = get_video_duration(output_video)
+    expected_output_duration = sum(r['duration_ms'] for r in results)
+
+    # Проверка расхождения общей длительности
+    total_diff = abs(real_output_duration - expected_output_duration)
+    if total_diff > 500:  # > 500ms
+        print(f"  ⚠️ Расхождение длительности: {total_diff}ms")
+        print(f"     Ожидалось: {ms_to_time(expected_output_duration)}")
+        print(f"     Реально: {ms_to_time(real_output_duration)}")
+    else:
+        print(f"  ✅ Длительность в норме (расхождение: {total_diff}ms)")
+
+    # Валидация синхронизации субтитров
+    print("📋 Валидация субтитров...")
+    sync_issues = 0
+    for r in results:
+        if r.get('expected_ms') and r['sub_index'] is not None:
+            diff = abs(r['duration_ms'] - r['expected_ms'])
+            if diff > 100:
+                sync_issues += 1
+
+    if sync_issues > 0:
+        print(f"  ⚠️ Субтитров с расхождением >100ms: {sync_issues}")
+    else:
+        print(f"  ✅ Все субтитры синхронизированы точно")
+
     # === ОЧИСТКА ===
     print("🧹 Очистка...")
     shutil.rmtree(temp_dir, ignore_errors=True)
@@ -471,13 +528,29 @@ def main():
     total_chars = sum(len(r['text']) for r in results if r['text'])
     avg_cps = total_chars / (total_duration / 1000) if total_duration > 0 else 0
 
+    # Детальная статистика по CPS
+    cps_good = 0
+    cps_high = 0
+    for r in results:
+        if r['text']:
+            seg_cps = len(r['text']) / (r['duration_ms'] / 1000) if r['duration_ms'] > 0 else 0
+            if seg_cps <= TARGET_CPS + 1:
+                cps_good += 1
+            else:
+                cps_high += 1
+
     print(f"\n{'=' * 60}")
     print(f"✅ ГОТОВО!")
     print(f"   Видео: {output_video.name}")
     print(f"   Субтитры: {output_srt.name}")
     print(f"   Было: {ms_to_time(video_duration)}")
-    print(f"   Стало: {ms_to_time(total_duration)}")
+    print(f"   Стало: {ms_to_time(real_output_duration)}")
     print(f"   Средний CPS: {avg_cps:.1f} (цель: {TARGET_CPS})")
+    print(f"   Субтитры OK: {cps_good}/{cps_good + cps_high}")
+    if sync_issues == 0 and total_diff <= 500:
+        print(f"   🎯 Синхронизация: ИДЕАЛЬНАЯ")
+    else:
+        print(f"   ⚠️ Синхронизация: есть расхождения")
     print(f"{'=' * 60}\n")
 
 
