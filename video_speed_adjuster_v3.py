@@ -385,8 +385,12 @@ def main():
     import time
     t0 = time.time()
 
+    print(f"  📁 Filter файл: {filter_file}")
+    print(f"  ⏳ Запуск FFmpeg...")
+
     # Запускаем FFmpeg с отслеживанием прогресса
-    process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+    # stderr не захватываем чтобы видеть ошибки в консоли
+    process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=None,
                                 universal_newlines=True, bufsize=1)
 
     current_time = 0
@@ -414,14 +418,16 @@ def main():
     print()  # Новая строка после прогресс-бара
 
     # Удаляем временный файл фильтра
-    filter_file.unlink(missing_ok=True)
+    # filter_file.unlink(missing_ok=True)  # Оставляем для отладки
 
     if process.returncode != 0:
-        print(f"❌ FFmpeg ошибка:")
-        stderr = process.stderr.read()
-        print(stderr[-1000:] if stderr else "Unknown error")
+        print(f"\n❌ FFmpeg завершился с кодом {process.returncode}")
+        print(f"   Filter файл сохранён: {filter_file}")
         input("Нажмите Enter для выхода...")
         sys.exit(1)
+
+    # Удаляем файл только при успехе
+    filter_file.unlink(missing_ok=True)
 
     print(f"  ✅ Рендер завершён за {elapsed:.1f}s")
 
