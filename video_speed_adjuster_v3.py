@@ -235,7 +235,7 @@ def render_segment(idx, start_ms, end_ms, slowdown, input_video, temp_dir, encod
         t /= 2.0
     atempo_chain.append(f"atempo={t:.4f}")
 
-    af = f"atrim=start={rel_start:.4f}:end={rel_end:.4f},asetpts=PTS-STARTPTS,{','.join(atempo_chain)}"
+    af = f"atrim=start={rel_start:.4f}:end={rel_end:.4f},asetpts=PTS-STARTPTS,{','.join(atempo_chain)},apad"
 
     cmd = [
         'ffmpeg', '-hide_banner', '-y',
@@ -248,6 +248,8 @@ def render_segment(idx, start_ms, end_ms, slowdown, input_video, temp_dir, encod
         '-r', str(int(fps)),
         '-avoid_negative_ts', 'make_zero',
         '-fflags', '+genpts',
+        '-shortest',
+        '-async', '1',
         '-loglevel', 'error',
         str(output_file)
     ]
@@ -443,7 +445,11 @@ def main():
         'ffmpeg', '-hide_banner', '-y',
         '-f', 'concat', '-safe', '0',
         '-i', str(concat_file),
-        '-c', 'copy',
+        '-c:v', encoder, *enc_opts,
+        '-c:a', 'aac', '-b:a', '128k',
+        '-r', str(int(fps)),
+        '-vsync', 'cfr',
+        '-async', '1',
         '-movflags', '+faststart',
         str(output_video)
     ]
