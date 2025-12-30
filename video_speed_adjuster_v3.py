@@ -257,13 +257,18 @@ def render_segment(idx, start_ms, end_ms, slowdown, input_video, temp_dir, encod
         return None
 
     if output_file.exists() and output_file.stat().st_size > 0:
-        output_duration_ms = int(duration_sec * slowdown * 1000)
+        # Получаем ФАКТИЧЕСКУЮ длительность через ffprobe (не расчётную!)
+        actual_duration_ms = get_video_duration(output_file)
+        if actual_duration_ms <= 0:
+            # Fallback на расчётную если ffprobe не сработал
+            actual_duration_ms = int(duration_sec * slowdown * 1000)
+
         label = "SLOW" if slowdown > 1.01 else "NORM"
-        log(f"  ✅ Seg {idx:03d} | {label} x{slowdown:.2f} | {duration_sec:.1f}s → {output_duration_ms/1000:.1f}s | {elapsed:.1f}s")
+        log(f"  ✅ Seg {idx:03d} | {label} x{slowdown:.2f} | {duration_sec:.1f}s → {actual_duration_ms/1000:.1f}s | {elapsed:.1f}s")
         return {
             'idx': idx,
             'file': output_file,
-            'duration_ms': output_duration_ms
+            'duration_ms': actual_duration_ms
         }
 
     return None
@@ -276,7 +281,7 @@ def main():
     input_video = Path(os.environ.get('VST_VIDEO_INPUT', script_dir / 'input.mp4'))
     eng_srt = Path(os.environ.get('VST_SRT_INPUT', script_dir / 'output.srt'))
     rus_srt = Path(os.environ.get('VST_TRANSLATION', script_dir / 'russian.srt'))
-    rus_txt = Path(os.environ.get('VST_TRANSLATION', script_dir / 'Penis.txt'))
+    rus_txt = Path(os.environ.get('VST_TRANSLATION', script_dir / 'translation.txt'))
 
     output_dir = Path(os.environ.get('VST_OUTPUT_DIR', '')) or input_video.parent
     output_video = output_dir / 'output_adjusted.mp4'
@@ -447,6 +452,7 @@ def main():
     # Позиции в выходном видео
     new_pos = 0
     srt_lines = []
+    sub_counter = 0  # Последовательная нумерация (без дыр)
 
     for r in results:
         duration = r['duration_ms']
@@ -454,9 +460,10 @@ def main():
         text = r['text']
 
         if sub_index is not None and text:
+            sub_counter += 1
             start_time = ms_to_time(new_pos)
             end_time = ms_to_time(new_pos + duration)
-            srt_lines.append(f"{sub_index}\n{start_time} --> {end_time}\n{text}")
+            srt_lines.append(f"{sub_counter}\n{start_time} --> {end_time}\n{text}")
 
         new_pos += duration
 
