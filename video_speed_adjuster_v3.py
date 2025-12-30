@@ -235,7 +235,7 @@ def render_segment(idx, start_ms, end_ms, slowdown, input_video, temp_dir, encod
         t /= 2.0
     atempo_chain.append(f"atempo={t:.4f}")
 
-    af = f"atrim=start={rel_start:.4f}:end={rel_end:.4f},asetpts=PTS-STARTPTS,{','.join(atempo_chain)},apad"
+    af = f"atrim=start={rel_start:.4f}:end={rel_end:.4f},asetpts=PTS-STARTPTS,{','.join(atempo_chain)}"
 
     cmd = [
         'ffmpeg', '-hide_banner', '-y',
