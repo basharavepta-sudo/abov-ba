@@ -452,18 +452,29 @@ def main():
     # === СУБТИТРЫ ===
     print("✍️ Генерация субтитров...")
 
-    # Позиции в выходном видео
-    new_pos = 0
+    # Получаем РЕАЛЬНУЮ длительность склеенного видео
+    real_video_duration = get_video_duration(output_video)
+    calculated_duration = sum(r['duration_ms'] for r in results)
+
+    # Коэффициент коррекции для синхронизации
+    if calculated_duration > 0 and real_video_duration > 0:
+        sync_factor = real_video_duration / calculated_duration
+        print(f"  📐 Коррекция синхронизации: {sync_factor:.4f} (расчёт: {calculated_duration}мс, реально: {real_video_duration}мс)")
+    else:
+        sync_factor = 1.0
+
+    # Позиции в выходном видео с коррекцией
+    new_pos = 0.0
     srt_lines = []
 
     for r in results:
-        duration = r['duration_ms']
+        duration = r['duration_ms'] * sync_factor
         sub_index = r['sub_index']
         text = r['text']
 
         if sub_index is not None and text:
-            start_time = ms_to_time(new_pos)
-            end_time = ms_to_time(new_pos + duration)
+            start_time = ms_to_time(int(new_pos))
+            end_time = ms_to_time(int(new_pos + duration))
             srt_lines.append(f"{sub_index}\n{start_time} --> {end_time}\n{text}")
 
         new_pos += duration
@@ -475,16 +486,15 @@ def main():
     shutil.rmtree(temp_dir, ignore_errors=True)
 
     # === ИТОГ ===
-    total_duration = sum(r['duration_ms'] for r in results)
     total_chars = sum(len(r['text']) for r in results if r['text'])
-    avg_cps = total_chars / (total_duration / 1000) if total_duration > 0 else 0
+    avg_cps = total_chars / (real_video_duration / 1000) if real_video_duration > 0 else 0
 
     print(f"\n{'=' * 60}")
     print(f"✅ ГОТОВО!")
     print(f"   Видео: {output_video.name}")
     print(f"   Субтитры: {output_srt.name}")
     print(f"   Было: {ms_to_time(video_duration)}")
-    print(f"   Стало: {ms_to_time(total_duration)}")
+    print(f"   Стало: {ms_to_time(real_video_duration)}")
     print(f"   Средний CPS: {avg_cps:.1f} (цель: {TARGET_CPS})")
     print(f"{'=' * 60}\n")
 
