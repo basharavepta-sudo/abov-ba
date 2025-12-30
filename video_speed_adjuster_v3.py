@@ -189,6 +189,10 @@ def calculate_slowdown(text, duration_ms):
     needed_duration = chars / TARGET_CPS
     slowdown = needed_duration / duration_sec
 
+    # Ослабляем эффект замедления на 35%
+    # slowdown=2.0 → 1.0 + (2.0-1.0)*0.65 = 1.65
+    slowdown = 1.0 + (slowdown - 1.0) * 0.65
+
     # Ограничиваем максимальное замедление
     slowdown = min(slowdown, MAX_SLOWDOWN)
 
