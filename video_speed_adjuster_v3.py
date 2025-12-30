@@ -359,13 +359,17 @@ def main():
 
     print(f"  📐 Filter complex: {len(filter_complex)} символов")
 
+    # Записываем filter в файл (обход лимита командной строки Windows)
+    filter_file = output_dir / 'filter_complex.txt'
+    filter_file.write_text(filter_complex, encoding='utf-8')
+
     # === РЕНДЕР ===
     print("\n🚀 Рендер (один проход)...")
 
     cmd = [
         'ffmpeg', '-hide_banner', '-y',
         '-i', str(input_video),
-        '-filter_complex', filter_complex,
+        '-filter_complex_script', str(filter_file),
         '-map', '[vout]', '-map', '[aout]',
         '-c:v', encoder, *enc_opts,
         '-c:a', 'aac', '-b:a', '128k',
@@ -379,9 +383,13 @@ def main():
     result = subprocess.run(cmd, capture_output=True, text=True)
     elapsed = time.time() - t0
 
+    # Удаляем временный файл фильтра
+    filter_file.unlink(missing_ok=True)
+
     if result.returncode != 0:
         print(f"❌ FFmpeg ошибка:")
-        print(result.stderr[-500:] if result.stderr else "Unknown error")
+        print(result.stderr[-1000:] if result.stderr else "Unknown error")
+        input("Нажмите Enter для выхода...")
         sys.exit(1)
 
     print(f"  ✅ Рендер завершён за {elapsed:.1f}s")
@@ -421,6 +429,14 @@ def main():
     print(f"   Время рендера: {elapsed:.1f}s")
     print(f"{'=' * 60}\n")
 
+    input("Нажмите Enter для выхода...")
+
 
 if __name__ == '__main__':
-    main()
+    try:
+        main()
+    except Exception as e:
+        print(f"\n❌ ОШИБКА: {e}")
+        import traceback
+        traceback.print_exc()
+        input("Нажмите Enter для выхода...")
