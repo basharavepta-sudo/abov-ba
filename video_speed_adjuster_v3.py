@@ -17,8 +17,10 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import threading
 
 # === НАСТРОЙКИ ===
-TARGET_CPS = 12.0   # Целевой CPS (символов в секунду)
-MAX_SLOWDOWN = 3.0  # Максимальное замедление (3x = в 3 раза медленнее)
+TARGET_CPS = 16.0       # Целевой CPS (символов в секунду) после замедления
+SOFT_THRESHOLD = 16.0   # Ниже этого - не трогаем
+HARD_THRESHOLD = 20.0   # Выше этого - полное замедление
+MAX_SLOWDOWN = 3.0      # Максимальное замедление (3x = в 3 раза медленнее)
 
 print_lock = threading.Lock()
 
@@ -170,7 +172,11 @@ def get_encoder():
 
 def calculate_slowdown(text, duration_ms):
     """
-    Вычисляет на сколько замедлить видео.
+    Вычисляет на сколько замедлить видео с ПЛАВНЫМ переходом.
+
+    CPS <= 16: без замедления
+    CPS 16-20: плавное нарастание замедления
+    CPS >= 20: полное замедление до TARGET_CPS (16)
 
     Возвращает коэффициент замедления (1.0 = без изменений, 2.0 = в 2 раза медленнее)
     """
@@ -181,19 +187,30 @@ def calculate_slowdown(text, duration_ms):
     duration_sec = duration_ms / 1000.0
     current_cps = chars / duration_sec
 
-    # Если CPS уже ок - не трогаем
-    if current_cps <= TARGET_CPS:
+    # Ниже мягкого порога - не трогаем
+    if current_cps <= SOFT_THRESHOLD:
         return 1.0
 
-    # Сколько нужно времени для TARGET_CPS
-    needed_duration = chars / TARGET_CPS
-    slowdown = needed_duration / duration_sec
+    # Полное замедление (сколько нужно для TARGET_CPS)
+    full_slowdown = current_cps / TARGET_CPS
+
+    # Плавный переход между SOFT и HARD threshold
+    if current_cps < HARD_THRESHOLD:
+        # Линейная интерполяция: 0 при SOFT, 1 при HARD
+        blend = (current_cps - SOFT_THRESHOLD) / (HARD_THRESHOLD - SOFT_THRESHOLD)
+        # Плавнее через smoothstep: 3x² - 2x³
+        blend = blend * blend * (3 - 2 * blend)
+        slowdown = 1.0 + (full_slowdown - 1.0) * blend
+    else:
+        # Выше жёсткого порога - полное замедление
+        slowdown = full_slowdown
 
     # Ограничиваем максимальное замедление
     slowdown = min(slowdown, MAX_SLOWDOWN)
 
     result_cps = chars / (duration_sec * slowdown)
-    log(f"    [{chars} симв] CPS: {current_cps:.1f} → {result_cps:.1f} | x{slowdown:.2f}")
+    zone = "SOFT" if current_cps < HARD_THRESHOLD else "FULL"
+    log(f"    [{chars} симв] CPS: {current_cps:.1f} → {result_cps:.1f} | x{slowdown:.2f} ({zone})")
 
     return slowdown
 
@@ -284,9 +301,11 @@ def main():
     temp_dir = output_dir / 'temp_segments'
 
     print("\n" + "=" * 60)
-    print("  🎬 VIDEO SPEED ADJUSTER v5.0")
+    print("  🎬 VIDEO SPEED ADJUSTER v5.1 (smooth threshold)")
     print("=" * 60)
     print(f"  Target CPS: {TARGET_CPS}")
+    print(f"  Soft threshold: {SOFT_THRESHOLD} (no slowdown below)")
+    print(f"  Hard threshold: {HARD_THRESHOLD} (full slowdown above)")
     print(f"  Max slowdown: {MAX_SLOWDOWN}x")
     print("=" * 60)
 
