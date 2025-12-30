@@ -195,14 +195,15 @@ def calculate_slowdown(text, duration_ms):
     full_slowdown = current_cps / TARGET_CPS
 
     # Плавный переход между SOFT и HARD threshold
-    if current_cps < HARD_THRESHOLD:
+    threshold_range = HARD_THRESHOLD - SOFT_THRESHOLD
+    if threshold_range > 0 and current_cps < HARD_THRESHOLD:
         # Линейная интерполяция: 0 при SOFT, 1 при HARD
-        blend = (current_cps - SOFT_THRESHOLD) / (HARD_THRESHOLD - SOFT_THRESHOLD)
+        blend = (current_cps - SOFT_THRESHOLD) / threshold_range
         # Плавнее через smoothstep: 3x² - 2x³
         blend = blend * blend * (3 - 2 * blend)
         slowdown = 1.0 + (full_slowdown - 1.0) * blend
     else:
-        # Выше жёсткого порога - полное замедление
+        # Выше жёсткого порога или SOFT=HARD - полное замедление
         slowdown = full_slowdown
 
     # Ограничиваем максимальное замедление
@@ -230,7 +231,18 @@ def get_real_duration_ms(video_path, fallback_ms=None):
     return fallback_ms if fallback_ms else 0
 
 
-def render_segment(idx, start_ms, end_ms, slowdown, input_video, temp_dir, encoder, enc_opts, fps):
+def has_audio_stream(video_path):
+    """Проверяет есть ли аудио дорожка"""
+    cmd = ['ffprobe', '-v', 'error', '-select_streams', 'a',
+           '-show_entries', 'stream=index', '-of', 'csv=p=0', str(video_path)]
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        return bool(result.stdout.strip())
+    except:
+        return False
+
+
+def render_segment(idx, start_ms, end_ms, slowdown, input_video, temp_dir, encoder, enc_opts, fps, has_audio=True):
     """Рендерит один сегмент видео"""
 
     start_sec = start_ms / 1000.0
@@ -252,28 +264,35 @@ def render_segment(idx, start_ms, end_ms, slowdown, input_video, temp_dir, encod
     vf = f"trim=start={rel_start:.4f}:end={rel_end:.4f},setpts={slowdown:.4f}*(PTS-STARTPTS)"
 
     # Аудио: atempo работает наоборот (0.5 = замедление в 2 раза)
-    tempo = 1.0 / slowdown
-    atempo_chain = []
-    t = tempo
-    while t < 0.5:
-        atempo_chain.append("atempo=0.5")
-        t /= 0.5
-    while t > 2.0:
-        atempo_chain.append("atempo=2.0")
-        t /= 2.0
-    atempo_chain.append(f"atempo={t:.4f}")
-
-    af = f"atrim=start={rel_start:.4f}:end={rel_end:.4f},asetpts=PTS-STARTPTS,{','.join(atempo_chain)}"
+    if has_audio:
+        tempo = 1.0 / slowdown
+        atempo_chain = []
+        t = tempo
+        while t < 0.5:
+            atempo_chain.append("atempo=0.5")
+            t /= 0.5
+        while t > 2.0:
+            atempo_chain.append("atempo=2.0")
+            t /= 2.0
+        atempo_chain.append(f"atempo={t:.4f}")
+        af = f"atrim=start={rel_start:.4f}:end={rel_end:.4f},asetpts=PTS-STARTPTS,{','.join(atempo_chain)}"
+        filter_complex = f'[0:v]{vf}[v];[0:a]{af}[a]'
+        maps = ['-map', '[v]', '-map', '[a]']
+        audio_opts = ['-c:a', 'aac', '-b:a', '128k']
+    else:
+        filter_complex = f'[0:v]{vf}[v]'
+        maps = ['-map', '[v]']
+        audio_opts = ['-an']
 
     cmd = [
         'ffmpeg', '-hide_banner', '-y',
         '-ss', f'{seek:.3f}',
         '-i', str(input_video),
-        '-filter_complex', f'[0:v]{vf}[v];[0:a]{af}[a]',
-        '-map', '[v]', '-map', '[a]',
+        '-filter_complex', filter_complex,
+        *maps,
         '-c:v', encoder, *enc_opts,
-        '-c:a', 'aac', '-b:a', '128k',
-        '-r', str(int(fps)),
+        *audio_opts,
+        '-r', str(fps),
         '-avoid_negative_ts', 'make_zero',
         '-fflags', '+genpts',
         '-loglevel', 'error',
@@ -329,7 +348,7 @@ def main():
     temp_dir = output_dir / 'temp_segments'
 
     print("\n" + "=" * 60)
-    print("  🎬 VIDEO SPEED ADJUSTER v5.3 (bulletproof)")
+    print("  🎬 VIDEO SPEED ADJUSTER v5.4 (bulletproof++)")
     print("=" * 60)
     print(f"  Target CPS: {TARGET_CPS}")
     print(f"  Soft threshold: {SOFT_THRESHOLD} (no slowdown below)")
@@ -382,9 +401,18 @@ def main():
 
     # Инфо о видео
     video_duration = get_video_duration(input_video)
+    if video_duration <= 0:
+        print("❌ Не удалось определить длительность видео!")
+        sys.exit(1)
+
     fps = get_video_fps(input_video)
-    fps = max(24, min(60, round(fps)))
-    print(f"📼 Видео: {ms_to_time(video_duration)} @ {fps} FPS")
+    # Сохраняем оригинальный FPS, но ограничиваем разумными пределами
+    fps = max(15, min(60, fps))
+    print(f"📼 Видео: {ms_to_time(video_duration)} @ {fps:.2f} FPS")
+
+    has_audio = has_audio_stream(input_video)
+    if not has_audio:
+        print("⚠️ Видео без аудио дорожки")
 
     encoder, enc_opts = get_encoder()
     print(f"🔧 Энкодер: {encoder}")
@@ -416,6 +444,7 @@ def main():
         if start < current_pos:
             start = current_pos
         if start >= end:
+            print(f"  ⚠️ Субтитр #{i+1} пропущен (перекрытие): {rus_text[:30]}...")
             continue
 
         duration = end - start
@@ -460,7 +489,7 @@ def main():
             future = executor.submit(
                 render_segment,
                 idx, seg['start'], seg['end'], seg['slowdown'],
-                input_video, temp_dir, encoder, enc_opts, fps
+                input_video, temp_dir, encoder, enc_opts, fps, has_audio
             )
             futures[future] = (idx, seg)
 
