@@ -17,8 +17,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import threading
 
 # === НАСТРОЙКИ ===
-TARGET_CPS = 12.0   # Целевой CPS (символов в секунду)
-MAX_SLOWDOWN = 3.0  # Максимальное замедление (3x = в 3 раза медленнее)
+TARGET_CPS = 16.0   # Целевой CPS (символов в секунду)
+MAX_SLOWDOWN = 2.5  # Максимальное замедление
 
 print_lock = threading.Lock()
 
