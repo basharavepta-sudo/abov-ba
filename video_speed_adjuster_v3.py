@@ -1,30 +1,20 @@
 #!/usr/bin/env python3
 """
-Video Speed Adjuster v5.0 - ПРОСТОЙ И НАДЁЖНЫЙ
+Video Speed Adjuster v6.0 - ЕДИНЫЙ FILTER_COMPLEX
 
 Замедляет видео чтобы CPS был комфортным для озвучки.
-Каждый субтитр = отдельный сегмент видео. Без магии.
+Один проход FFmpeg, без промежуточных файлов, точная синхронизация.
 """
 
 import re
 import sys
 import subprocess
 import os
-import shutil
-import time
 from pathlib import Path
-from concurrent.futures import ThreadPoolExecutor, as_completed
-import threading
 
 # === НАСТРОЙКИ ===
 TARGET_CPS = 17.0   # Целевой CPS (символов в секунду)
 MAX_SLOWDOWN = 3.0  # Максимальное замедление (3x = в 3 раза медленнее)
-
-print_lock = threading.Lock()
-
-def log(msg):
-    with print_lock:
-        print(msg)
 
 
 def time_to_ms(time_str):
@@ -80,7 +70,7 @@ def parse_srt(content):
         start = time_to_ms(parts[0])
         end = time_to_ms(parts[1])
         text = ' '.join(line.strip() for line in lines[text_start:] if line.strip())
-        text = re.sub(r'<[^>]+>', '', text)  # убираем теги
+        text = re.sub(r'<[^>]+>', '', text)
         text = re.sub(r'\{[^}]+\}', '', text)
         text = re.sub(r'\([^)]*\)', '', text)
         text = text.strip()
@@ -149,7 +139,6 @@ def get_encoder():
     except:
         return 'libx264', ['-preset', 'fast', '-crf', '20']
 
-    # Тест энкодера
     def test(enc):
         try:
             cmd = ['ffmpeg', '-hide_banner', '-y', '-f', 'lavfi',
@@ -169,11 +158,7 @@ def get_encoder():
 
 
 def calculate_slowdown(text, duration_ms):
-    """
-    Вычисляет на сколько замедлить видео.
-
-    Возвращает коэффициент замедления (1.0 = без изменений, 2.0 = в 2 раза медленнее)
-    """
+    """Вычисляет коэффициент замедления"""
     if not text or duration_ms <= 0:
         return 1.0
 
@@ -181,108 +166,38 @@ def calculate_slowdown(text, duration_ms):
     duration_sec = duration_ms / 1000.0
     current_cps = chars / duration_sec
 
-    # Если CPS уже ок - не трогаем
     if current_cps <= TARGET_CPS:
         return 1.0
 
-    # Сколько нужно времени для TARGET_CPS
     needed_duration = chars / TARGET_CPS
     slowdown = needed_duration / duration_sec
 
     # Ослабляем эффект замедления на 35%
-    # slowdown=2.0 → 1.0 + (2.0-1.0)*0.65 = 1.65
     slowdown = 1.0 + (slowdown - 1.0) * 0.65
 
-    # Ограничиваем максимальное замедление
     slowdown = min(slowdown, MAX_SLOWDOWN)
-
-    result_cps = chars / (duration_sec * slowdown)
-    log(f"    [{chars} симв] CPS: {current_cps:.1f} → {result_cps:.1f} | x{slowdown:.2f}")
-
     return slowdown
 
 
-def render_segment(idx, start_ms, end_ms, slowdown, input_video, temp_dir, encoder, enc_opts, fps):
-    """Рендерит один сегмент видео"""
-
-    start_sec = start_ms / 1000.0
-    end_sec = end_ms / 1000.0
-    duration_sec = end_sec - start_sec
-
-    if duration_sec < 0.04:
-        return None
-
-    output_file = temp_dir / f"seg_{idx:04d}.mp4"
-
-    # Seek чуть раньше для точности
-    seek = max(0, start_sec - 1.0)
-    rel_start = start_sec - seek
-    rel_end = end_sec - seek
-
-    # Видео фильтр: trim + замедление через setpts
-    # setpts=2.0*PTS = в 2 раза медленнее
-    vf = f"trim=start={rel_start:.4f}:end={rel_end:.4f},setpts={slowdown:.4f}*(PTS-STARTPTS)"
-
-    # Аудио: atempo работает наоборот (0.5 = замедление в 2 раза)
+def build_atempo_chain(slowdown):
+    """Строит цепочку atempo фильтров для замедления аудио"""
     tempo = 1.0 / slowdown
-    atempo_chain = []
+    chain = []
     t = tempo
     while t < 0.5:
-        atempo_chain.append("atempo=0.5")
+        chain.append("atempo=0.5")
         t /= 0.5
     while t > 2.0:
-        atempo_chain.append("atempo=2.0")
+        chain.append("atempo=2.0")
         t /= 2.0
-    atempo_chain.append(f"atempo={t:.4f}")
-
-    af = f"atrim=start={rel_start:.4f}:end={rel_end:.4f},asetpts=PTS-STARTPTS,{','.join(atempo_chain)}"
-
-    cmd = [
-        'ffmpeg', '-hide_banner', '-y',
-        '-ss', f'{seek:.3f}',
-        '-i', str(input_video),
-        '-filter_complex', f'[0:v]{vf}[v];[0:a]{af}[a]',
-        '-map', '[v]', '-map', '[a]',
-        '-c:v', encoder, *enc_opts,
-        '-c:a', 'aac', '-b:a', '128k',
-        '-r', str(int(fps)),
-        '-avoid_negative_ts', 'make_zero',
-        '-fflags', '+genpts',
-        '-shortest',
-        '-async', '1',
-        '-loglevel', 'error',
-        str(output_file)
-    ]
-
-    t0 = time.time()
-    result = subprocess.run(cmd, capture_output=True, text=True)
-    elapsed = time.time() - t0
-
-    if result.returncode != 0:
-        log(f"  ❌ Seg {idx}: {result.stderr[:100] if result.stderr else 'error'}")
-        return None
-
-    if output_file.exists() and output_file.stat().st_size > 0:
-        # Получаем РЕАЛЬНУЮ длительность сегмента из файла
-        real_duration_ms = get_video_duration(output_file)
-        if real_duration_ms <= 0:
-            # Fallback на расчётную если ffprobe не сработал
-            real_duration_ms = int(duration_sec * slowdown * 1000)
-        label = "SLOW" if slowdown > 1.01 else "NORM"
-        log(f"  ✅ Seg {idx:03d} | {label} x{slowdown:.2f} | {duration_sec:.1f}s → {real_duration_ms/1000:.1f}s | {elapsed:.1f}s")
-        return {
-            'idx': idx,
-            'file': output_file,
-            'duration_ms': real_duration_ms
-        }
-
-    return None
+    chain.append(f"atempo={t:.6f}")
+    return ','.join(chain)
 
 
 def main():
     script_dir = Path(__file__).parent.resolve()
 
-    # Пути из переменных окружения или дефолтные
+    # Пути
     input_video = Path(os.environ.get('VST_VIDEO_INPUT', script_dir / 'input.mp4'))
     eng_srt = Path(os.environ.get('VST_SRT_INPUT', script_dir / 'output.srt'))
     rus_srt = Path(os.environ.get('VST_TRANSLATION', script_dir / 'russian.srt'))
@@ -291,10 +206,9 @@ def main():
     output_dir = Path(os.environ.get('VST_OUTPUT_DIR', '')) or input_video.parent
     output_video = output_dir / 'output_adjusted.mp4'
     output_srt = output_dir / 'adjusted.srt'
-    temp_dir = output_dir / 'temp_segments'
 
     print("\n" + "=" * 60)
-    print("  🎬 VIDEO SPEED ADJUSTER v5.0")
+    print("  🎬 VIDEO SPEED ADJUSTER v6.0 (Single Filter)")
     print("=" * 60)
     print(f"  Target CPS: {TARGET_CPS}")
     print(f"  Max slowdown: {MAX_SLOWDOWN}x")
@@ -309,7 +223,7 @@ def main():
         print(f"❌ SRT не найден: {eng_srt}")
         sys.exit(1)
 
-    # Читаем английские субтитры
+    # Читаем субтитры
     eng_content = read_file(eng_srt)
     if not eng_content:
         print("❌ Не удалось прочитать SRT")
@@ -344,9 +258,9 @@ def main():
     print(f"🔧 Энкодер: {encoder}")
 
     # === СТРОИМ СЕГМЕНТЫ ===
-    print("\n🔍 Анализ...")
+    print("\n🔍 Анализ сегментов...")
 
-    segments = []  # список: (start_ms, end_ms, slowdown, sub_index, rus_text)
+    segments = []
     count = min(len(eng_subs), len(rus_texts))
     current_pos = 0
 
@@ -359,8 +273,8 @@ def main():
         # Gap перед субтитром
         if start > current_pos:
             segments.append({
-                'start': current_pos,
-                'end': start,
+                'start_ms': current_pos,
+                'end_ms': start,
                 'slowdown': 1.0,
                 'sub_index': None,
                 'text': ''
@@ -375,9 +289,16 @@ def main():
         duration = end - start
         slowdown = calculate_slowdown(rus_text, duration)
 
+        if slowdown > 1.01:
+            chars = len(rus_text)
+            duration_sec = duration / 1000.0
+            current_cps = chars / duration_sec
+            result_cps = chars / (duration_sec * slowdown)
+            print(f"  [{chars} симв] CPS: {current_cps:.1f} → {result_cps:.1f} | x{slowdown:.2f}")
+
         segments.append({
-            'start': start,
-            'end': end,
+            'start_ms': start,
+            'end_ms': end,
             'slowdown': slowdown,
             'sub_index': i + 1,
             'text': rus_text
@@ -388,120 +309,116 @@ def main():
     # Хвост видео
     if current_pos < video_duration:
         segments.append({
-            'start': current_pos,
-            'end': video_duration,
+            'start_ms': current_pos,
+            'end_ms': video_duration,
             'slowdown': 1.0,
             'sub_index': None,
             'text': ''
         })
 
-    # Статистика
+    # Фильтруем пустые сегменты
+    segments = [s for s in segments if s['end_ms'] > s['start_ms'] + 10]
+
     sub_segments = [s for s in segments if s['sub_index'] is not None]
     slow_count = sum(1 for s in sub_segments if s['slowdown'] > 1.01)
-    print(f"  📊 Субтитров: {len(sub_segments)} | Замедлений: {slow_count}")
+    print(f"\n📊 Всего сегментов: {len(segments)} | С субтитрами: {len(sub_segments)} | Замедлений: {slow_count}")
+
+    # === СТРОИМ FILTER_COMPLEX ===
+    print("\n🔧 Построение filter_complex...")
+
+    video_filters = []
+    audio_filters = []
+    video_labels = []
+    audio_labels = []
+
+    for idx, seg in enumerate(segments):
+        start_sec = seg['start_ms'] / 1000.0
+        end_sec = seg['end_ms'] / 1000.0
+        slowdown = seg['slowdown']
+
+        v_label = f"v{idx}"
+        a_label = f"a{idx}"
+
+        # Видео: trim + setpts для замедления
+        vf = f"[0:v]trim=start={start_sec:.4f}:end={end_sec:.4f},setpts={slowdown:.6f}*(PTS-STARTPTS)[{v_label}]"
+        video_filters.append(vf)
+        video_labels.append(f"[{v_label}]")
+
+        # Аудио: atrim + atempo для замедления
+        atempo = build_atempo_chain(slowdown)
+        af = f"[0:a]atrim=start={start_sec:.4f}:end={end_sec:.4f},asetpts=PTS-STARTPTS,{atempo}[{a_label}]"
+        audio_filters.append(af)
+        audio_labels.append(f"[{a_label}]")
+
+    # Concat всех сегментов
+    n = len(segments)
+    video_concat = f"{''.join(video_labels)}concat=n={n}:v=1:a=0[vout]"
+    audio_concat = f"{''.join(audio_labels)}concat=n={n}:v=0:a=1[aout]"
+
+    filter_complex = ';'.join(video_filters + audio_filters + [video_concat, audio_concat])
+
+    print(f"  📐 Filter complex: {len(filter_complex)} символов")
 
     # === РЕНДЕР ===
-    if temp_dir.exists():
-        shutil.rmtree(temp_dir)
-    temp_dir.mkdir()
-
-    print(f"\n🚀 Рендер ({len(segments)} сегментов)...")
-
-    results = []
-    with ThreadPoolExecutor(max_workers=3) as executor:
-        futures = {}
-        for idx, seg in enumerate(segments):
-            future = executor.submit(
-                render_segment,
-                idx, seg['start'], seg['end'], seg['slowdown'],
-                input_video, temp_dir, encoder, enc_opts, fps
-            )
-            futures[future] = (idx, seg)
-
-        for future in as_completed(futures):
-            idx, seg = futures[future]
-            result = future.result()
-            if result:
-                result['sub_index'] = seg['sub_index']
-                result['text'] = seg['text']
-                results.append(result)
-
-    results.sort(key=lambda x: x['idx'])
-
-    if not results:
-        print("❌ Ничего не отрендерилось!")
-        sys.exit(1)
-
-    # === СКЛЕЙКА ===
-    print("🔗 Склеивание...")
-
-    concat_file = temp_dir / 'concat.txt'
-    with open(concat_file, 'w') as f:
-        for r in results:
-            path = str(r['file'].absolute()).replace("'", "'\\''")
-            f.write(f"file '{path}'\n")
+    print("\n🚀 Рендер (один проход)...")
 
     cmd = [
         'ffmpeg', '-hide_banner', '-y',
-        '-f', 'concat', '-safe', '0',
-        '-i', str(concat_file),
+        '-i', str(input_video),
+        '-filter_complex', filter_complex,
+        '-map', '[vout]', '-map', '[aout]',
         '-c:v', encoder, *enc_opts,
         '-c:a', 'aac', '-b:a', '128k',
-        '-r', str(int(fps)),
-        '-vsync', 'cfr',
-        '-async', '1',
+        '-r', str(fps),
         '-movflags', '+faststart',
         str(output_video)
     ]
-    subprocess.run(cmd, capture_output=True)
+
+    import time
+    t0 = time.time()
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    elapsed = time.time() - t0
+
+    if result.returncode != 0:
+        print(f"❌ FFmpeg ошибка:")
+        print(result.stderr[-500:] if result.stderr else "Unknown error")
+        sys.exit(1)
+
+    print(f"  ✅ Рендер завершён за {elapsed:.1f}s")
 
     # === СУБТИТРЫ ===
-    print("✍️ Генерация субтитров...")
+    print("\n✍️ Генерация субтитров...")
 
-    # Получаем РЕАЛЬНУЮ длительность склеенного видео
-    real_video_duration = get_video_duration(output_video)
-    calculated_duration = sum(r['duration_ms'] for r in results)
-
-    # Коэффициент коррекции для синхронизации
-    if calculated_duration > 0 and real_video_duration > 0:
-        sync_factor = real_video_duration / calculated_duration
-        print(f"  📐 Коррекция синхронизации: {sync_factor:.4f} (расчёт: {calculated_duration}мс, реально: {real_video_duration}мс)")
-    else:
-        sync_factor = 1.0
-
-    # Позиции в выходном видео с коррекцией
+    # Вычисляем позиции на основе slowdown
     new_pos = 0.0
     srt_lines = []
 
-    for r in results:
-        duration = r['duration_ms'] * sync_factor
-        sub_index = r['sub_index']
-        text = r['text']
+    for seg in segments:
+        orig_duration = seg['end_ms'] - seg['start_ms']
+        new_duration = orig_duration * seg['slowdown']
 
-        if sub_index is not None and text:
+        if seg['sub_index'] is not None and seg['text']:
             start_time = ms_to_time(int(new_pos))
-            end_time = ms_to_time(int(new_pos + duration))
-            srt_lines.append(f"{sub_index}\n{start_time} --> {end_time}\n{text}")
+            end_time = ms_to_time(int(new_pos + new_duration))
+            srt_lines.append(f"{seg['sub_index']}\n{start_time} --> {end_time}\n{seg['text']}")
 
-        new_pos += duration
+        new_pos += new_duration
 
     output_srt.write_text('\n\n'.join(srt_lines), encoding='utf-8')
 
-    # === ОЧИСТКА ===
-    print("🧹 Очистка...")
-    shutil.rmtree(temp_dir, ignore_errors=True)
-
     # === ИТОГ ===
-    total_chars = sum(len(r['text']) for r in results if r['text'])
-    avg_cps = total_chars / (real_video_duration / 1000) if real_video_duration > 0 else 0
+    real_duration = get_video_duration(output_video)
+    total_chars = sum(len(s['text']) for s in segments if s['text'])
+    avg_cps = total_chars / (real_duration / 1000) if real_duration > 0 else 0
 
     print(f"\n{'=' * 60}")
     print(f"✅ ГОТОВО!")
     print(f"   Видео: {output_video.name}")
     print(f"   Субтитры: {output_srt.name}")
     print(f"   Было: {ms_to_time(video_duration)}")
-    print(f"   Стало: {ms_to_time(real_video_duration)}")
+    print(f"   Стало: {ms_to_time(real_duration)}")
     print(f"   Средний CPS: {avg_cps:.1f} (цель: {TARGET_CPS})")
+    print(f"   Время рендера: {elapsed:.1f}s")
     print(f"{'=' * 60}\n")
 
 
