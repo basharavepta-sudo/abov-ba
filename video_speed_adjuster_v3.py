@@ -261,13 +261,17 @@ def render_segment(idx, start_ms, end_ms, slowdown, input_video, temp_dir, encod
         return None
 
     if output_file.exists() and output_file.stat().st_size > 0:
-        output_duration_ms = int(duration_sec * slowdown * 1000)
+        # Получаем РЕАЛЬНУЮ длительность сегмента из файла
+        real_duration_ms = get_video_duration(output_file)
+        if real_duration_ms <= 0:
+            # Fallback на расчётную если ffprobe не сработал
+            real_duration_ms = int(duration_sec * slowdown * 1000)
         label = "SLOW" if slowdown > 1.01 else "NORM"
-        log(f"  ✅ Seg {idx:03d} | {label} x{slowdown:.2f} | {duration_sec:.1f}s → {output_duration_ms/1000:.1f}s | {elapsed:.1f}s")
+        log(f"  ✅ Seg {idx:03d} | {label} x{slowdown:.2f} | {duration_sec:.1f}s → {real_duration_ms/1000:.1f}s | {elapsed:.1f}s")
         return {
             'idx': idx,
             'file': output_file,
-            'duration_ms': output_duration_ms
+            'duration_ms': real_duration_ms
         }
 
     return None
