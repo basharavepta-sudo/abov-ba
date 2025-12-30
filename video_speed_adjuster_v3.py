@@ -313,8 +313,15 @@ def main():
     # Пути из переменных окружения или дефолтные
     input_video = Path(os.environ.get('VST_VIDEO_INPUT', script_dir / 'input.mp4'))
     eng_srt = Path(os.environ.get('VST_SRT_INPUT', script_dir / 'output.srt'))
-    rus_srt = Path(os.environ.get('VST_TRANSLATION', script_dir / 'russian.srt'))
-    rus_txt = Path(os.environ.get('VST_TRANSLATION', script_dir / 'Penis.txt'))
+
+    # Перевод: сначала проверяем env, потом russian.srt, потом Penis.txt
+    translation_env = os.environ.get('VST_TRANSLATION', '')
+    if translation_env:
+        rus_translation = Path(translation_env)
+    elif (script_dir / 'russian.srt').exists():
+        rus_translation = script_dir / 'russian.srt'
+    else:
+        rus_translation = script_dir / 'Penis.txt'
 
     output_dir = Path(os.environ.get('VST_OUTPUT_DIR', '')) or input_video.parent
     output_video = output_dir / 'output_adjusted.mp4'
@@ -322,7 +329,7 @@ def main():
     temp_dir = output_dir / 'temp_segments'
 
     print("\n" + "=" * 60)
-    print("  🎬 VIDEO SPEED ADJUSTER v5.2 (real duration sync)")
+    print("  🎬 VIDEO SPEED ADJUSTER v5.3 (bulletproof)")
     print("=" * 60)
     print(f"  Target CPS: {TARGET_CPS}")
     print(f"  Soft threshold: {SOFT_THRESHOLD} (no slowdown below)")
@@ -349,16 +356,25 @@ def main():
 
     # Читаем русский перевод
     rus_texts = []
-    if rus_srt.exists():
-        content = read_file(rus_srt)
+    if not rus_translation.exists():
+        print(f"❌ Русский перевод не найден: {rus_translation}")
+        sys.exit(1)
+
+    content = read_file(rus_translation)
+    if not content:
+        print(f"❌ Не удалось прочитать перевод: {rus_translation}")
+        sys.exit(1)
+
+    # Определяем формат по расширению
+    if rus_translation.suffix.lower() == '.srt':
         rus_texts = [s['text'] for s in parse_srt(content)]
         print(f"📝 Русский SRT: {len(rus_texts)} строк")
-    elif rus_txt.exists():
-        content = read_file(rus_txt)
+    else:
         rus_texts = parse_txt(content)
         print(f"📝 Русский TXT: {len(rus_texts)} строк")
-    else:
-        print("❌ Русский перевод не найден")
+
+    if not rus_texts:
+        print(f"❌ Перевод пустой: {rus_translation}")
         sys.exit(1)
 
     if len(eng_subs) != len(rus_texts):
@@ -462,6 +478,19 @@ def main():
         print("❌ Ничего не отрендерилось!")
         sys.exit(1)
 
+    # Проверяем пропущенные сегменты
+    rendered_indices = {r['idx'] for r in results}
+    all_indices = set(range(len(segments)))
+    missing = all_indices - rendered_indices
+    if missing:
+        missing_subs = [segments[i] for i in missing if segments[i]['sub_index'] is not None]
+        if missing_subs:
+            print(f"⚠️ ВНИМАНИЕ: {len(missing_subs)} субтитров не отрендерились и будут пропущены!")
+            for seg in missing_subs[:5]:  # показываем первые 5
+                print(f"   - #{seg['sub_index']}: {seg['text'][:40]}...")
+        else:
+            print(f"⚠️ {len(missing)} gap-сегментов пропущено (не критично)")
+
     # === СКЛЕЙКА ===
     print("🔗 Склеивание...")
 
@@ -479,7 +508,14 @@ def main():
         '-movflags', '+faststart',
         str(output_video)
     ]
-    subprocess.run(cmd, capture_output=True)
+    concat_result = subprocess.run(cmd, capture_output=True, text=True)
+    if concat_result.returncode != 0:
+        print(f"❌ Ошибка склейки: {concat_result.stderr[:200] if concat_result.stderr else 'unknown'}")
+        sys.exit(1)
+
+    if not output_video.exists() or output_video.stat().st_size == 0:
+        print("❌ Выходное видео не создано!")
+        sys.exit(1)
 
     # === СУБТИТРЫ ===
     print("✍️ Генерация субтитров...")
