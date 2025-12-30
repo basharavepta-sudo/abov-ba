@@ -348,7 +348,7 @@ def main():
     temp_dir = output_dir / 'temp_segments'
 
     print("\n" + "=" * 60)
-    print("  🎬 VIDEO SPEED ADJUSTER v5.4 (bulletproof++)")
+    print("  🎬 VIDEO SPEED ADJUSTER v5.5 (final)")
     print("=" * 60)
     print(f"  Target CPS: {TARGET_CPS}")
     print(f"  Soft threshold: {SOFT_THRESHOLD} (no slowdown below)")
@@ -371,6 +371,9 @@ def main():
         print("❌ Не удалось прочитать SRT")
         sys.exit(1)
     eng_subs = parse_srt(eng_content)
+    if not eng_subs:
+        print("❌ SRT файл пустой или не содержит субтитров!")
+        sys.exit(1)
     print(f"📝 Английских субтитров: {len(eng_subs)}")
 
     # Читаем русский перевод
@@ -478,7 +481,7 @@ def main():
     # === РЕНДЕР ===
     if temp_dir.exists():
         shutil.rmtree(temp_dir)
-    temp_dir.mkdir()
+    temp_dir.mkdir(parents=True, exist_ok=True)
 
     print(f"\n🚀 Рендер ({len(segments)} сегментов)...")
 
@@ -565,6 +568,8 @@ def main():
 
         new_pos += duration
 
+    if not srt_lines:
+        print("⚠️ Внимание: субтитры пустые!")
     output_srt.write_text('\n\n'.join(srt_lines), encoding='utf-8')
 
     # === ОЧИСТКА ===
