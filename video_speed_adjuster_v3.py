@@ -30,12 +30,12 @@ import threading
 from typing import List, Dict, Tuple, Optional, Any
 
 # --- CONFIGURATION ---
-TARGET_CPS = 15.0           # Target CPS (comfortable reading speed)
-MAX_CPS = 16.0              # Trigger slowdown above this
-TARGET_WPS = 2.0            # Target Words Per Second (slow, clear speech)
-MAX_WPS = 2.3               # Max WPS before slowdown (aggressive threshold)
-MIN_SPEED = 0.4             # Минимальная скорость (макс. замедление 2.5x)
-MAX_SPEED = 2.5             # Максимальная скорость (макс. замедление 2.5x)
+TARGET_CPS = 12.0           # Target CPS (очень комфортное чтение)
+MAX_CPS = 14.0              # Trigger slowdown above this
+TARGET_WPS = 1.8            # Target Words Per Second (медленная чёткая речь)
+MAX_WPS = 2.0               # Max WPS before slowdown
+MIN_SPEED = 1.0             # НЕТ УСКОРЕНИЯ - только замедление или без изменений
+MAX_SPEED = 3.0             # Максимальное замедление 3x
 MERGE_THRESHOLD = 0.0       # ОТКЛЮЧЕНО - каждый субтитр = отдельный сегмент
 CPS_MODE = True             # Use CPS-based calculation (more accurate for dubbing)
 
@@ -249,13 +249,16 @@ def calculate_speed(orig_text: str, trans_text: str, duration_ms: int = 0) -> fl
         return max(MIN_SPEED, min(MAX_SPEED, speed))
 
     else:
-        # Legacy ratio-based calculation
+        # Legacy ratio-based calculation (только замедление!)
         orig_len = len(orig_text.strip())
         if orig_len == 0:
             return 1.0
 
         ratio = trans_len / orig_len
-        return max(MIN_SPEED, min(MAX_SPEED, ratio))
+        # Только замедление, никакого ускорения
+        if ratio <= 1.0:
+            return 1.0
+        return min(MAX_SPEED, ratio)
 
 
 def build_segments(eng_subs: List[Dict], rus_texts: List[str], video_duration_ms: int) -> List[Dict]:
