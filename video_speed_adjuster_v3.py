@@ -215,15 +215,19 @@ def calculate_slowdown(text, duration_ms):
     return slowdown
 
 
-def get_real_duration_ms(video_path):
+def get_real_duration_ms(video_path, fallback_ms=None):
     """Получает РЕАЛЬНУЮ длительность видео в мс через ffprobe"""
     cmd = ['ffprobe', '-v', 'error', '-show_entries', 'format=duration',
            '-of', 'default=noprint_wrappers=1:nokey=1', str(video_path)]
     try:
         result = subprocess.run(cmd, capture_output=True, text=True)
-        return int(float(result.stdout.strip()) * 1000)
+        duration = float(result.stdout.strip())
+        if duration > 0:
+            return int(duration * 1000)
     except:
-        return 0
+        pass
+    # Fallback на теоретическую длительность если ffprobe не сработал
+    return fallback_ms if fallback_ms else 0
 
 
 def render_segment(idx, start_ms, end_ms, slowdown, input_video, temp_dir, encoder, enc_opts, fps):
@@ -286,8 +290,8 @@ def render_segment(idx, start_ms, end_ms, slowdown, input_video, temp_dir, encod
 
     if output_file.exists() and output_file.stat().st_size > 0:
         # РЕАЛЬНАЯ длительность вместо теоретической - избегаем рассинхрона!
-        real_duration_ms = get_real_duration_ms(output_file)
         theoretical_ms = int(duration_sec * slowdown * 1000)
+        real_duration_ms = get_real_duration_ms(output_file, fallback_ms=theoretical_ms)
         drift = real_duration_ms - theoretical_ms
 
         label = "SLOW" if slowdown > 1.01 else "NORM"
