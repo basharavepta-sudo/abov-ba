@@ -1,21 +1,9 @@
 #!/usr/bin/env python3
 """
-Video Speed Adjuster v3.0 - NO DUPLICATE FRAMES
+Video Speed Adjuster v5.0 - ПРОСТОЙ И НАДЁЖНЫЙ
 
-Корректно замедляет/ускоряет видео на основе сравнения субтитров.
-Каждый кадр исходного видео используется РОВНО ОДИН РАЗ.
-
-Принцип работы:
-1. Читает английские субтитры (output.srt) — исходные тайминги
-2. Читает русские субтитры (russian.srt) или текст (Penis.txt)
-3. Для каждого субтитра вычисляет коэффициент: len(рус) / len(англ)
-4. Замедляет сегменты где русский текст длиннее (нужно больше времени)
-5. Использует ТОЧНЫЙ trim через фильтры ffmpeg (без дублирования)
-
-Required files:
-  - input.mp4
-  - output.srt (английские субтитры)
-  - russian.srt ИЛИ Penis.txt (русский перевод)
+Замедляет видео чтобы CPS был комфортным для озвучки.
+Каждый субтитр = отдельный сегмент видео. Без магии.
 """
 
 import re
@@ -27,38 +15,30 @@ import time
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import threading
-from typing import List, Dict, Tuple, Optional, Any
 
-# --- CONFIGURATION ---
-TARGET_CPS = 12.0           # Target CPS (очень комфортное чтение)
-MAX_CPS = 14.0              # Trigger slowdown above this
-TARGET_WPS = 1.8            # Target Words Per Second (медленная чёткая речь)
-MAX_WPS = 2.0               # Max WPS before slowdown
-MIN_SPEED = 1.0             # НЕТ УСКОРЕНИЯ - только замедление или без изменений
-MAX_SPEED = 3.0             # Максимальное замедление 3x
-MERGE_THRESHOLD = 0.0       # ОТКЛЮЧЕНО - каждый субтитр = отдельный сегмент
-CPS_MODE = True             # Use CPS-based calculation (more accurate for dubbing)
+# === НАСТРОЙКИ ===
+TARGET_CPS = 12.0   # Целевой CPS (символов в секунду)
+MAX_SLOWDOWN = 3.0  # Максимальное замедление (3x = в 3 раза медленнее)
 
 print_lock = threading.Lock()
 
-def safe_print(msg: str) -> None:
+def log(msg):
     with print_lock:
         print(msg)
 
 
-def time_to_ms(time_str: str) -> int:
-    """Конвертирует SRT таймкод в миллисекунды."""
+def time_to_ms(time_str):
+    """00:01:23,456 -> миллисекунды"""
     match = re.match(r'(\d+):(\d+):(\d+)[,.](\d+)', time_str.strip())
     if not match:
         return 0
     h, m, s, ms = match.groups()
-    # Нормализуем миллисекунды (может быть 1-3 цифры)
     ms = ms.ljust(3, '0')[:3]
     return int(h) * 3600000 + int(m) * 60000 + int(s) * 1000 + int(ms)
 
 
-def ms_to_time(ms: int) -> str:
-    """Конвертирует миллисекунды в SRT таймкод."""
+def ms_to_time(ms):
+    """миллисекунды -> 00:01:23,456"""
     if ms < 0:
         ms = 0
     h = ms // 3600000
@@ -70,18 +50,17 @@ def ms_to_time(ms: int) -> str:
     return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
 
 
-def parse_srt(content: str) -> List[Dict[str, Any]]:
-    """Парсит SRT файл."""
+def parse_srt(content):
+    """Парсит SRT файл"""
     content = content.replace('\r\n', '\n').replace('\r', '\n')
     blocks = re.split(r'\n\s*\n', content.strip())
-    subtitles = []
+    subs = []
 
     for block in blocks:
         lines = block.strip().split('\n')
         if len(lines) < 2:
             continue
 
-        # Ищем строку с таймкодом
         timecode_line = None
         text_start = 0
 
@@ -94,576 +73,363 @@ def parse_srt(content: str) -> List[Dict[str, Any]]:
         if not timecode_line:
             continue
 
-        parts = timecode_line.strip().split('-->')
+        parts = timecode_line.split('-->')
         if len(parts) != 2:
             continue
 
-        start_ms = time_to_ms(parts[0])
-        end_ms = time_to_ms(parts[1])
-
+        start = time_to_ms(parts[0])
+        end = time_to_ms(parts[1])
         text = ' '.join(line.strip() for line in lines[text_start:] if line.strip())
-        text = re.sub(r'<[^>]+>', '', text)
+        text = re.sub(r'<[^>]+>', '', text)  # убираем теги
         text = re.sub(r'\{[^}]+\}', '', text)
-        text = re.sub(r'\([^)]*\)', '', text)  # Убираем (звуки)
+        text = re.sub(r'\([^)]*\)', '', text)
         text = text.strip()
 
-        if text and end_ms > start_ms:
-            subtitles.append({
-                'start_ms': start_ms,
-                'end_ms': end_ms,
-                'text': text
-            })
+        if text and end > start:
+            subs.append({'start': start, 'end': end, 'text': text})
 
-    return subtitles
+    return subs
 
 
-def parse_numbered_text(content: str) -> List[str]:
-    """Парсит нумерованный текст (Penis.txt)."""
-    content = content.replace('\r\n', '\n').replace('\r', '\n')
+def parse_txt(content):
+    """Парсит нумерованный текст"""
     lines = []
-
-    for line in content.split('\n'):
+    for line in content.replace('\r', '').split('\n'):
         line = line.strip()
         if not line:
             continue
         match = re.match(r'^\d+[\.\):]?\s*(.+)$', line)
         if match:
             lines.append(match.group(1).strip())
-
     return lines
 
 
-def get_video_info(video_path: Path) -> Dict[str, float]:
-    """Получает информацию о видео."""
+def read_file(path):
+    """Читает файл с автоопределением кодировки"""
+    for enc in ['utf-8', 'utf-8-sig', 'windows-1251', 'cp1252', 'latin-1']:
+        try:
+            return path.read_text(encoding=enc)
+        except:
+            pass
+    return None
+
+
+def get_video_duration(video_path):
+    """Длительность видео в мс"""
     cmd = ['ffprobe', '-v', 'error', '-show_entries', 'format=duration',
            '-of', 'default=noprint_wrappers=1:nokey=1', str(video_path)]
     try:
-        duration = float(subprocess.run(cmd, capture_output=True, text=True).stdout.strip())
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        return int(float(result.stdout.strip()) * 1000)
     except:
-        safe_print("❌ Не удалось получить длительность видео")
-        sys.exit(1)
+        return 0
 
+
+def get_video_fps(video_path):
+    """FPS видео"""
     cmd = ['ffprobe', '-v', 'error', '-select_streams', 'v:0',
            '-show_entries', 'stream=r_frame_rate',
            '-of', 'default=noprint_wrappers=1:nokey=1', str(video_path)]
-    fps_str = subprocess.run(cmd, capture_output=True, text=True).stdout.strip()
-
-    if '/' in fps_str:
-        num, den = fps_str.split('/')
-        fps = int(num) / int(den) if int(den) != 0 else 30.0
-    else:
-        fps = float(fps_str) if fps_str else 30.0
-
-    return {'duration': duration, 'fps': fps}
-
-
-def test_encoder(encoder: str) -> bool:
-    """Проверяет работоспособность энкодера."""
     try:
-        cmd = ['ffmpeg', '-hide_banner', '-y', '-f', 'lavfi',
-               '-i', 'color=black:s=256x256:d=0.1', '-c:v', encoder, '-f', 'null', '-']
-        return subprocess.run(cmd, capture_output=True, timeout=10).returncode == 0
+        fps_str = subprocess.run(cmd, capture_output=True, text=True).stdout.strip()
+        if '/' in fps_str:
+            num, den = fps_str.split('/')
+            return int(num) / int(den) if int(den) != 0 else 30.0
+        return float(fps_str) if fps_str else 30.0
     except:
-        return False
+        return 30.0
 
 
-def detect_gpu_encoder() -> Tuple[str, List[str], str]:
-    """Определяет лучший доступный энкодер."""
+def get_encoder():
+    """Определяет лучший энкодер"""
     try:
         result = subprocess.run(['ffmpeg', '-hide_banner', '-encoders'],
                                capture_output=True, text=True)
         encoders = result.stdout
-    except FileNotFoundError:
-        print("❌ ffmpeg не найден!")
-        sys.exit(1)
+    except:
+        return 'libx264', ['-preset', 'fast', '-crf', '20']
 
-    if 'h264_nvenc' in encoders and test_encoder('h264_nvenc'):
-        return 'h264_nvenc', ['-preset', 'p1', '-rc', 'vbr', '-cq', '22'], 'NVIDIA NVENC 🚀'
+    # Тест энкодера
+    def test(enc):
+        try:
+            cmd = ['ffmpeg', '-hide_banner', '-y', '-f', 'lavfi',
+                   '-i', 'color=black:s=64x64:d=0.1', '-c:v', enc, '-f', 'null', '-']
+            return subprocess.run(cmd, capture_output=True, timeout=10).returncode == 0
+        except:
+            return False
 
-    if 'h264_amf' in encoders and test_encoder('h264_amf'):
-        return 'h264_amf', ['-quality', 'speed', '-rc', 'vbr_peak', '-qp_i', '22', '-qp_p', '22'], 'AMD AMF ⚡'
+    if 'h264_nvenc' in encoders and test('h264_nvenc'):
+        return 'h264_nvenc', ['-preset', 'p1', '-rc', 'vbr', '-cq', '22']
+    if 'h264_amf' in encoders and test('h264_amf'):
+        return 'h264_amf', ['-quality', 'speed', '-rc', 'vbr_peak', '-qp_i', '22', '-qp_p', '22']
+    if 'h264_qsv' in encoders and test('h264_qsv'):
+        return 'h264_qsv', ['-preset', 'veryfast', '-global_quality', '22']
 
-    if 'h264_qsv' in encoders and test_encoder('h264_qsv'):
-        return 'h264_qsv', ['-preset', 'veryfast', '-global_quality', '22'], 'Intel QSV 🔵'
-
-    return 'libx264', ['-preset', 'fast', '-crf', '20'], 'CPU 🐢'
-
-
-def count_words(text: str) -> int:
-    """Считает количество слов в тексте."""
-    # Разбиваем по пробелам и пунктуации
-    words = re.findall(r'\b\w+\b', text, re.UNICODE)
-    return len(words)
+    return 'libx264', ['-preset', 'fast', '-crf', '20']
 
 
-def calculate_speed(orig_text: str, trans_text: str, duration_ms: int = 0) -> float:
+def calculate_slowdown(text, duration_ms):
     """
-    Вычисляет коэффициент скорости на основе CPS и WPS.
+    Вычисляет на сколько замедлить видео.
 
-    Учитывает ОБА фактора:
-    - CPS (Characters Per Second) - для Aegisub лимита
-    - WPS (Words Per Second) - для комфортного проговаривания
-
-    Если любой из параметров превышен - замедляем видео.
+    Возвращает коэффициент замедления (1.0 = без изменений, 2.0 = в 2 раза медленнее)
     """
-    trans_text = trans_text.strip()
-    trans_len = len(trans_text)
-    word_count = count_words(trans_text)
-
-    if trans_len == 0 or word_count == 0:
+    if not text or duration_ms <= 0:
         return 1.0
 
-    if CPS_MODE and duration_ms > 0:
-        duration_sec = duration_ms / 1000.0
+    chars = len(text)
+    duration_sec = duration_ms / 1000.0
+    current_cps = chars / duration_sec
 
-        # Current metrics
-        current_cps = trans_len / duration_sec if duration_sec > 0 else TARGET_CPS
-        current_wps = word_count / duration_sec if duration_sec > 0 else TARGET_WPS
+    # Если CPS уже ок - не трогаем
+    if current_cps <= TARGET_CPS:
+        return 1.0
 
-        # Check if we need to slow down (either CPS or WPS exceeded)
-        need_slowdown_cps = current_cps > MAX_CPS
-        need_slowdown_wps = current_wps > MAX_WPS
+    # Сколько нужно времени для TARGET_CPS
+    needed_duration = chars / TARGET_CPS
+    slowdown = needed_duration / duration_sec
 
-        if not need_slowdown_cps and not need_slowdown_wps:
-            # Already within limits, no change needed
-            return 1.0
+    # Ограничиваем максимальное замедление
+    slowdown = min(slowdown, MAX_SLOWDOWN)
 
-        # Calculate required duration for both metrics
-        required_duration_cps = trans_len / TARGET_CPS
-        required_duration_wps = word_count / TARGET_WPS
+    result_cps = chars / (duration_sec * slowdown)
+    log(f"    [{chars} симв] CPS: {current_cps:.1f} → {result_cps:.1f} | x{slowdown:.2f}")
 
-        # Use the LONGER required duration (slower speed = more time)
-        # This ensures BOTH CPS and WPS are satisfied
-        required_duration = max(required_duration_cps, required_duration_wps)
-
-        # Speed factor (>1 = slow down = video plays longer)
-        speed = required_duration / duration_sec
-
-        # Calculate resulting metrics for logging
-        result_cps = trans_len / required_duration
-        result_wps = word_count / required_duration
-
-        reason = "CPS" if required_duration_cps >= required_duration_wps else "WPS"
-        safe_print(f"    {reason}: CPS {current_cps:.1f}→{result_cps:.1f} | WPS {current_wps:.1f}→{result_wps:.1f} | Speed: {speed:.2f}x | \"{trans_text[:25]}...\"")
-
-        return max(MIN_SPEED, min(MAX_SPEED, speed))
-
-    else:
-        # Legacy ratio-based calculation (только замедление!)
-        orig_len = len(orig_text.strip())
-        if orig_len == 0:
-            return 1.0
-
-        ratio = trans_len / orig_len
-        # Только замедление, никакого ускорения
-        if ratio <= 1.0:
-            return 1.0
-        return min(MAX_SPEED, ratio)
+    return slowdown
 
 
-def build_segments(eng_subs: List[Dict], rus_texts: List[str], video_duration_ms: int) -> List[Dict]:
-    """
-    Строит список сегментов с гарантией отсутствия перекрытий.
+def render_segment(idx, start_ms, end_ms, slowdown, input_video, temp_dir, encoder, enc_opts, fps):
+    """Рендерит один сегмент видео"""
 
-    ВАЖНО: Каждый сегмент — это диапазон [start_ms, end_ms) в ИСХОДНОМ видео.
-    Сегменты идут последовательно и НЕ перекрываются.
-    """
-    segments = []
-    count = min(len(eng_subs), len(rus_texts))
+    start_sec = start_ms / 1000.0
+    end_sec = end_ms / 1000.0
+    duration_sec = end_sec - start_sec
 
-    # Сортируем субтитры по времени начала
-    sorted_subs = sorted(enumerate(eng_subs[:count]), key=lambda x: x[1]['start_ms'])
-
-    current_pos = 0  # Текущая позиция в исходном видео (мс)
-
-    for orig_idx, sub in sorted_subs:
-        orig_start = sub['start_ms']
-        orig_end = sub['end_ms']
-        eng_text = sub['text']
-        rus_text = rus_texts[orig_idx]
-
-        # Gap перед субтитром (если есть)
-        if orig_start > current_pos:
-            segments.append({
-                'type': 'gap',
-                'orig_start_ms': current_pos,
-                'orig_end_ms': orig_start,
-                'speed': 1.0,
-                'eng_text': '',
-                'rus_text': '',
-                'sub_index': None
-            })
-            current_pos = orig_start
-
-        # Если субтитры перекрываются с предыдущим — корректируем
-        if orig_start < current_pos:
-            orig_start = current_pos
-            if orig_start >= orig_end:
-                continue  # Пропускаем полностью перекрытый субтитр
-
-        # Вычисляем скорость на основе CPS
-        duration_ms = orig_end - orig_start
-        speed = calculate_speed(eng_text, rus_text, duration_ms)
-
-        segments.append({
-            'type': 'subtitle',
-            'orig_start_ms': orig_start,
-            'orig_end_ms': orig_end,
-            'speed': speed,
-            'eng_text': eng_text,
-            'rus_text': rus_text,
-            'sub_index': orig_idx + 1
-        })
-
-        current_pos = orig_end
-
-    # Хвост видео
-    if current_pos < video_duration_ms:
-        segments.append({
-            'type': 'gap',
-            'orig_start_ms': current_pos,
-            'orig_end_ms': video_duration_ms,
-            'speed': 1.0,
-            'eng_text': '',
-            'rus_text': '',
-            'sub_index': None
-        })
-
-    return segments
-
-
-def merge_segments(segments: List[Dict]) -> List[Dict]:
-    """
-    Объединяет соседние GAP сегменты (не субтитры!).
-
-    ВАЖНО: Субтитры НИКОГДА не сливаются — каждый остаётся отдельным сегментом
-    для точного соответствия video ↔ subtitle.
-    """
-    if not segments:
-        return []
-
-    merged = []
-    current = None
-
-    for seg in segments:
-        if seg['type'] == 'subtitle':
-            # Субтитр — сохраняем предыдущий gap (если был) и добавляем субтитр
-            if current is not None:
-                merged.append(current)
-                current = None
-            merged.append(seg.copy())
-        else:
-            # Gap — можно слить с предыдущим gap
-            if current is None:
-                current = seg.copy()
-            else:
-                # Расширяем текущий gap
-                current['orig_end_ms'] = seg['orig_end_ms']
-
-    # Добавляем последний gap если есть
-    if current is not None:
-        merged.append(current)
-
-    gap_count = sum(1 for s in segments if s['type'] == 'gap')
-    merged_gap_count = sum(1 for s in merged if s['type'] == 'gap')
-    safe_print(f"  ✨ Сегментов: {len(merged)} (gap: {gap_count}→{merged_gap_count})")
-
-    return merged
-
-
-def process_segment(args: tuple) -> Optional[Dict]:
-    """
-    Рендерит один сегмент с использованием ТОЧНОГО trim.
-
-    Используем фильтр trim вместо -ss/-t для гарантии точности.
-    Гибридный подход: быстрый seek близко к началу + точный trim.
-    """
-    idx, seg, input_video, temp_dir, encoder, enc_opts, fps = args
-
-    orig_start_sec = seg['orig_start_ms'] / 1000.0
-    orig_end_sec = seg['orig_end_ms'] / 1000.0
-    orig_duration_sec = orig_end_sec - orig_start_sec
-
-    if orig_duration_sec < 0.04:
+    if duration_sec < 0.04:
         return None
 
-    temp_file = temp_dir / f"seg_{idx:04d}.mp4"
-    speed = seg['speed']
+    output_file = temp_dir / f"seg_{idx:04d}.mp4"
 
-    # Быстрый seek на 1 секунду раньше (для скорости)
-    seek_sec = max(0, orig_start_sec - 1.0)
+    # Seek чуть раньше для точности
+    seek = max(0, start_sec - 1.0)
+    rel_start = start_sec - seek
+    rel_end = end_sec - seek
 
-    # Относительные позиции после seek
-    rel_start = orig_start_sec - seek_sec
-    rel_end = orig_end_sec - seek_sec
-
-    # Фильтры с ТОЧНЫМ trim
-    # trim обрезает по ИСХОДНЫМ таймкодам потока
-    # setpts сбрасывает таймштампы и применяет скорость
-    video_filter = (
-        f"trim=start={rel_start:.4f}:end={rel_end:.4f},"
-        f"setpts={speed:.4f}*(PTS-STARTPTS)"
-    )
+    # Видео фильтр: trim + замедление через setpts
+    # setpts=2.0*PTS = в 2 раза медленнее
+    vf = f"trim=start={rel_start:.4f}:end={rel_end:.4f},setpts={slowdown:.4f}*(PTS-STARTPTS)"
 
     # Аудио: atempo работает наоборот (0.5 = замедление в 2 раза)
-    audio_speed = 1.0 / speed if speed > 0 else 1.0
+    tempo = 1.0 / slowdown
+    atempo_chain = []
+    t = tempo
+    while t < 0.5:
+        atempo_chain.append("atempo=0.5")
+        t /= 0.5
+    while t > 2.0:
+        atempo_chain.append("atempo=2.0")
+        t /= 2.0
+    atempo_chain.append(f"atempo={t:.4f}")
 
-    # Цепочка atempo (ограничение 0.5-2.0)
-    atempo_parts = []
-    temp_speed = audio_speed
-    while temp_speed < 0.5:
-        atempo_parts.append("atempo=0.5")
-        temp_speed /= 0.5
-    while temp_speed > 2.0:
-        atempo_parts.append("atempo=2.0")
-        temp_speed /= 2.0
-    atempo_parts.append(f"atempo={temp_speed:.4f}")
-
-    audio_filter = (
-        f"atrim=start={rel_start:.4f}:end={rel_end:.4f},"
-        f"asetpts=PTS-STARTPTS,"
-        f"{','.join(atempo_parts)}"
-    )
+    af = f"atrim=start={rel_start:.4f}:end={rel_end:.4f},asetpts=PTS-STARTPTS,{','.join(atempo_chain)}"
 
     cmd = [
         'ffmpeg', '-hide_banner', '-y',
-        '-ss', f'{seek_sec:.3f}',  # Быстрый seek
+        '-ss', f'{seek:.3f}',
         '-i', str(input_video),
-        '-filter_complex', f'[0:v]{video_filter}[v];[0:a]{audio_filter}[a]',
+        '-filter_complex', f'[0:v]{vf}[v];[0:a]{af}[a]',
         '-map', '[v]', '-map', '[a]',
         '-c:v', encoder, *enc_opts,
         '-c:a', 'aac', '-b:a', '128k',
-        '-r', str(fps),
+        '-r', str(int(fps)),
         '-avoid_negative_ts', 'make_zero',
         '-fflags', '+genpts',
         '-loglevel', 'error',
-        str(temp_file)
+        str(output_file)
     ]
 
-    start_t = time.time()
-    res = subprocess.run(cmd, capture_output=True, text=True)
-    proc_time = time.time() - start_t
+    t0 = time.time()
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    elapsed = time.time() - t0
 
-    if res.returncode != 0:
-        safe_print(f"  ❌ Сег {idx}: {res.stderr[:150] if res.stderr else 'unknown error'}")
+    if result.returncode != 0:
+        log(f"  ❌ Seg {idx}: {result.stderr[:100] if result.stderr else 'error'}")
         return None
 
-    if temp_file.exists() and temp_file.stat().st_size > 0:
-        # Выходная длительность = исходная * speed
-        output_duration_ms = int(orig_duration_sec * speed * 1000)
-
-        speed_label = "SLOW" if speed > 1.01 else "FAST" if speed < 0.99 else "NORM"
-        safe_print(
-            f"  ✅ Seg {idx:03d} | {speed_label:>4} {speed:.2f}x | "
-            f"{orig_duration_sec:.1f}s → {output_duration_ms/1000:.1f}s | {proc_time:.1f}s"
-        )
-
+    if output_file.exists() and output_file.stat().st_size > 0:
+        output_duration_ms = int(duration_sec * slowdown * 1000)
+        label = "SLOW" if slowdown > 1.01 else "NORM"
+        log(f"  ✅ Seg {idx:03d} | {label} x{slowdown:.2f} | {duration_sec:.1f}s → {output_duration_ms/1000:.1f}s | {elapsed:.1f}s")
         return {
             'idx': idx,
-            'file': temp_file,
-            'output_duration_ms': output_duration_ms,
-            'orig_start_ms': seg['orig_start_ms'],
-            'orig_end_ms': seg['orig_end_ms'],
-            'speed': speed,
-            'sub_index': seg.get('sub_index'),  # Прямая связь с субтитром
-            'rus_text': seg.get('rus_text', '')  # Текст для субтитров
+            'file': output_file,
+            'duration_ms': output_duration_ms
         }
 
-    safe_print(f"  ❌ Сег {idx}: файл пуст или не создан")
-    return None
-
-
-def calculate_new_subtitle_times(results: List[Dict]) -> List[Dict]:
-    """
-    Генерирует субтитры НАПРЯМУЮ из результатов рендеринга.
-
-    Каждый сегмент с sub_index содержит всю информацию:
-    - output_duration_ms: реальная длительность после замедления
-    - rus_text: текст субтитра
-    - sub_index: номер субтитра
-
-    Никакого поиска по таймингам — прямая связь!
-    """
-    # Сортируем по порядку в видео
-    sorted_results = sorted(results, key=lambda x: x['idx'])
-
-    # Вычисляем позиции в выходном видео
-    new_pos = 0
-    subtitle_positions = {}  # sub_index -> (new_start, new_end, text)
-
-    for r in sorted_results:
-        output_duration = r['output_duration_ms']
-        sub_index = r.get('sub_index')
-
-        if sub_index is not None:
-            # Это сегмент с субтитром — запоминаем его позицию
-            subtitle_positions[sub_index] = {
-                'start_ms': new_pos,
-                'end_ms': new_pos + output_duration,
-                'text': r.get('rus_text', '')
-            }
-
-        new_pos += output_duration
-
-    # Формируем список субтитров
-    new_subs = []
-    for sub_index in sorted(subtitle_positions.keys()):
-        pos = subtitle_positions[sub_index]
-        new_subs.append({
-            'index': sub_index,
-            'start_ms': pos['start_ms'],
-            'end_ms': pos['end_ms'],
-            'text': pos['text']
-        })
-
-    return new_subs
-
-
-def read_file_safe(path: Path) -> Optional[str]:
-    """Читает файл с автоопределением кодировки."""
-    encodings = ['utf-8', 'utf-8-sig', 'windows-1251', 'cp1252', 'latin-1']
-    for enc in encodings:
-        try:
-            return path.read_text(encoding=enc)
-        except:
-            continue
     return None
 
 
 def main():
     script_dir = Path(__file__).parent.resolve()
 
-    # Support paths from environment variables (set by GUI)
+    # Пути из переменных окружения или дефолтные
     input_video = Path(os.environ.get('VST_VIDEO_INPUT', script_dir / 'input.mp4'))
-    eng_srt_file = Path(os.environ.get('VST_SRT_INPUT', script_dir / 'output.srt'))
-    rus_srt_file = Path(os.environ.get('VST_TRANSLATION', script_dir / 'russian.srt'))
-    rus_txt_file = Path(os.environ.get('VST_TRANSLATION', script_dir / 'Penis.txt'))
+    eng_srt = Path(os.environ.get('VST_SRT_INPUT', script_dir / 'output.srt'))
+    rus_srt = Path(os.environ.get('VST_TRANSLATION', script_dir / 'russian.srt'))
+    rus_txt = Path(os.environ.get('VST_TRANSLATION', script_dir / 'Penis.txt'))
 
-    # Output directory from environment or default to input video's parent
-    output_dir_env = os.environ.get('VST_OUTPUT_DIR', '')
-    output_dir = Path(output_dir_env) if output_dir_env else input_video.parent
+    output_dir = Path(os.environ.get('VST_OUTPUT_DIR', '')) or input_video.parent
     output_video = output_dir / 'output_adjusted.mp4'
     output_srt = output_dir / 'adjusted.srt'
     temp_dir = output_dir / 'temp_segments'
 
-    print("\n" + "=" * 65)
-    print("  🎬 VIDEO SPEED ADJUSTER v4.1 (CPS + WPS Based)")
-    print("=" * 65)
-    print(f"  📊 Target CPS: {TARGET_CPS} (max {MAX_CPS} for Aegisub)")
-    print(f"  🗣️ Target WPS: {TARGET_WPS} (max {MAX_WPS} words/sec)")
-    print(f"  ⚡ Speed range: {MIN_SPEED}x - {MAX_SPEED}x")
-    print(f"  📂 Output dir: {output_dir}")
-    print("=" * 65)
+    print("\n" + "=" * 60)
+    print("  🎬 VIDEO SPEED ADJUSTER v5.0")
+    print("=" * 60)
+    print(f"  Target CPS: {TARGET_CPS}")
+    print(f"  Max slowdown: {MAX_SLOWDOWN}x")
+    print("=" * 60)
 
-    # Проверка входного видео
+    # Проверки
     if not input_video.exists():
-        print(f"❌ Не найден видео файл: {input_video}")
+        print(f"❌ Видео не найдено: {input_video}")
         sys.exit(1)
 
-    if not eng_srt_file.exists():
-        print(f"❌ Не найден SRT файл: {eng_srt_file}")
-        sys.exit(1)
-
-    # Ищем русские субтитры (SRT или TXT)
-    rus_content = None
-    rus_is_srt = False
-
-    if rus_srt_file.exists():
-        rus_content = read_file_safe(rus_srt_file)
-        rus_is_srt = True
-        print(f"📄 Русские субтитры: russian.srt")
-    elif rus_txt_file.exists():
-        rus_content = read_file_safe(rus_txt_file)
-        rus_is_srt = False
-        print(f"📄 Русский текст: Penis.txt")
-    else:
-        print(f"❌ Не найден файл перевода: {rus_txt_file}")
+    if not eng_srt.exists():
+        print(f"❌ SRT не найден: {eng_srt}")
         sys.exit(1)
 
     # Читаем английские субтитры
-    eng_content = read_file_safe(eng_srt_file)
+    eng_content = read_file(eng_srt)
     if not eng_content:
-        print("❌ Не удалось прочитать output.srt")
+        print("❌ Не удалось прочитать SRT")
         sys.exit(1)
-
     eng_subs = parse_srt(eng_content)
     print(f"📝 Английских субтитров: {len(eng_subs)}")
 
-    # Читаем русский текст
-    if rus_is_srt:
-        rus_subs = parse_srt(rus_content)
-        rus_texts = [s['text'] for s in rus_subs]
+    # Читаем русский перевод
+    rus_texts = []
+    if rus_srt.exists():
+        content = read_file(rus_srt)
+        rus_texts = [s['text'] for s in parse_srt(content)]
+        print(f"📝 Русский SRT: {len(rus_texts)} строк")
+    elif rus_txt.exists():
+        content = read_file(rus_txt)
+        rus_texts = parse_txt(content)
+        print(f"📝 Русский TXT: {len(rus_texts)} строк")
     else:
-        rus_texts = parse_numbered_text(rus_content)
-
-    print(f"📝 Русских фраз: {len(rus_texts)}")
+        print("❌ Русский перевод не найден")
+        sys.exit(1)
 
     if len(eng_subs) != len(rus_texts):
-        print(f"⚠️ Внимание: количество не совпадает! Будет использовано: {min(len(eng_subs), len(rus_texts))}")
+        print(f"⚠️ Количество не совпадает! Используем: {min(len(eng_subs), len(rus_texts))}")
 
-    # Определяем энкодер
-    encoder, enc_opts, encoder_name = detect_gpu_encoder()
-    print(f"🔧 Энкодер: {encoder_name}")
+    # Инфо о видео
+    video_duration = get_video_duration(input_video)
+    fps = get_video_fps(input_video)
+    fps = max(24, min(60, round(fps)))
+    print(f"📼 Видео: {ms_to_time(video_duration)} @ {fps} FPS")
 
-    # Информация о видео
-    info = get_video_info(input_video)
-    fps = max(24, min(60, round(info['fps'])))
-    duration_ms = int(info['duration'] * 1000)
-    print(f"📼 Видео: {ms_to_time(duration_ms)} | {fps} FPS")
+    encoder, enc_opts = get_encoder()
+    print(f"🔧 Энкодер: {encoder}")
 
-    # Строим сегменты
-    print("\n🔍 Анализ субтитров...")
-    raw_segments = build_segments(eng_subs, rus_texts, duration_ms)
+    # === СТРОИМ СЕГМЕНТЫ ===
+    print("\n🔍 Анализ...")
 
-    # Статистика скоростей
-    speeds = [s['speed'] for s in raw_segments if s['type'] == 'subtitle']
-    if speeds:
-        slow_count = sum(1 for s in speeds if s > 1.01)
-        fast_count = sum(1 for s in speeds if s < 0.99)
-        norm_count = len(speeds) - slow_count - fast_count
-        print(f"  📊 Замедлений: {slow_count} | Ускорений: {fast_count} | Без изменений: {norm_count}")
+    segments = []  # список: (start_ms, end_ms, slowdown, sub_index, rus_text)
+    count = min(len(eng_subs), len(rus_texts))
+    current_pos = 0
 
-    # Оптимизация (слияние только gap-ов, субтитры остаются отдельными)
-    merged_segments = merge_segments(raw_segments)
+    for i in range(count):
+        sub = eng_subs[i]
+        rus_text = rus_texts[i]
+        start = sub['start']
+        end = sub['end']
 
-    # Подготовка временной папки
+        # Gap перед субтитром
+        if start > current_pos:
+            segments.append({
+                'start': current_pos,
+                'end': start,
+                'slowdown': 1.0,
+                'sub_index': None,
+                'text': ''
+            })
+
+        # Сам субтитр
+        if start < current_pos:
+            start = current_pos
+        if start >= end:
+            continue
+
+        duration = end - start
+        slowdown = calculate_slowdown(rus_text, duration)
+
+        segments.append({
+            'start': start,
+            'end': end,
+            'slowdown': slowdown,
+            'sub_index': i + 1,
+            'text': rus_text
+        })
+
+        current_pos = end
+
+    # Хвост видео
+    if current_pos < video_duration:
+        segments.append({
+            'start': current_pos,
+            'end': video_duration,
+            'slowdown': 1.0,
+            'sub_index': None,
+            'text': ''
+        })
+
+    # Статистика
+    sub_segments = [s for s in segments if s['sub_index'] is not None]
+    slow_count = sum(1 for s in sub_segments if s['slowdown'] > 1.01)
+    print(f"  📊 Субтитров: {len(sub_segments)} | Замедлений: {slow_count}")
+
+    # === РЕНДЕР ===
     if temp_dir.exists():
         shutil.rmtree(temp_dir)
     temp_dir.mkdir()
 
-    # Рендер
-    max_workers = 3 if encoder != 'libx264' else max(2, os.cpu_count() - 1)
-    print(f"\n🚀 Рендер в {max_workers} потока...")
-
-    tasks = [(i, seg, input_video, temp_dir, encoder, enc_opts, fps)
-             for i, seg in enumerate(merged_segments)]
+    print(f"\n🚀 Рендер ({len(segments)} сегментов)...")
 
     results = []
-    start_time = time.time()
+    with ThreadPoolExecutor(max_workers=3) as executor:
+        futures = {}
+        for idx, seg in enumerate(segments):
+            future = executor.submit(
+                render_segment,
+                idx, seg['start'], seg['end'], seg['slowdown'],
+                input_video, temp_dir, encoder, enc_opts, fps
+            )
+            futures[future] = (idx, seg)
 
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        futures = {executor.submit(process_segment, t): t[0] for t in tasks}
         for future in as_completed(futures):
-            res = future.result()
-            if res:
-                results.append(res)
+            idx, seg = futures[future]
+            result = future.result()
+            if result:
+                result['sub_index'] = seg['sub_index']
+                result['text'] = seg['text']
+                results.append(result)
 
     results.sort(key=lambda x: x['idx'])
 
     if not results:
-        print("❌ Нет обработанных сегментов!")
+        print("❌ Ничего не отрендерилось!")
         sys.exit(1)
 
-    elapsed = time.time() - start_time
-    print(f"\n⏱️ Рендер завершён: {elapsed:.1f} сек")
-
-    # Склейка
+    # === СКЛЕЙКА ===
     print("🔗 Склеивание...")
+
     concat_file = temp_dir / 'concat.txt'
-    with open(concat_file, 'w', encoding='utf-8') as f:
+    with open(concat_file, 'w') as f:
         for r in results:
-            safe_path = str(r['file'].absolute()).replace('\\', '/').replace("'", "'\\''")
-            f.write(f"file '{safe_path}'\n")
+            path = str(r['file'].absolute()).replace("'", "'\\''")
+            f.write(f"file '{path}'\n")
 
     cmd = [
         'ffmpeg', '-hide_banner', '-y',
@@ -675,39 +441,44 @@ def main():
     ]
     subprocess.run(cmd, capture_output=True)
 
-    # Генерация субтитров — напрямую из результатов рендеринга
+    # === СУБТИТРЫ ===
     print("✍️ Генерация субтитров...")
-    new_subs = calculate_new_subtitle_times(results)
 
-    srt_blocks = []
-    for s in sorted(new_subs, key=lambda x: x['index']):
-        srt_blocks.append(f"{s['index']}\n{ms_to_time(s['start_ms'])} --> {ms_to_time(s['end_ms'])}\n{s['text']}")
+    # Позиции в выходном видео
+    new_pos = 0
+    srt_lines = []
 
-    output_srt.write_text('\n\n'.join(srt_blocks), encoding='utf-8')
+    for r in results:
+        duration = r['duration_ms']
+        sub_index = r['sub_index']
+        text = r['text']
 
-    # Очистка
+        if sub_index is not None and text:
+            start_time = ms_to_time(new_pos)
+            end_time = ms_to_time(new_pos + duration)
+            srt_lines.append(f"{sub_index}\n{start_time} --> {end_time}\n{text}")
+
+        new_pos += duration
+
+    output_srt.write_text('\n\n'.join(srt_lines), encoding='utf-8')
+
+    # === ОЧИСТКА ===
     print("🧹 Очистка...")
     shutil.rmtree(temp_dir, ignore_errors=True)
 
-    # Итоговая информация
-    total_output_ms = sum(r['output_duration_ms'] for r in results)
+    # === ИТОГ ===
+    total_duration = sum(r['duration_ms'] for r in results)
+    total_chars = sum(len(r['text']) for r in results if r['text'])
+    avg_cps = total_chars / (total_duration / 1000) if total_duration > 0 else 0
 
-    # Calculate final CPS and WPS stats
-    total_chars = sum(len(s['text']) for s in new_subs)
-    total_words = sum(count_words(s['text']) for s in new_subs)
-    final_total_duration = total_output_ms / 1000.0
-    avg_cps = total_chars / final_total_duration if final_total_duration > 0 else 0
-    avg_wps = total_words / final_total_duration if final_total_duration > 0 else 0
-
-    print(f"\n{'='*65}")
-    print(f"✅ Готово!")
-    print(f"   📁 Видео: {output_video.name}")
-    print(f"   📁 Субтитры: {output_srt.name}")
-    print(f"   ⏱️ Исходная длительность: {ms_to_time(duration_ms)}")
-    print(f"   ⏱️ Новая длительность: {ms_to_time(total_output_ms)}")
-    print(f"   📊 Средний CPS: {avg_cps:.1f} (цель: {TARGET_CPS})")
-    print(f"   🗣️ Средний WPS: {avg_wps:.1f} (цель: {TARGET_WPS})")
-    print(f"{'='*65}\n")
+    print(f"\n{'=' * 60}")
+    print(f"✅ ГОТОВО!")
+    print(f"   Видео: {output_video.name}")
+    print(f"   Субтитры: {output_srt.name}")
+    print(f"   Было: {ms_to_time(video_duration)}")
+    print(f"   Стало: {ms_to_time(total_duration)}")
+    print(f"   Средний CPS: {avg_cps:.1f} (цель: {TARGET_CPS})")
+    print(f"{'=' * 60}\n")
 
 
 if __name__ == '__main__':
