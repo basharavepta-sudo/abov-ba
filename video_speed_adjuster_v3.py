@@ -366,6 +366,9 @@ def main():
     # === РЕНДЕР ===
     print("\n🚀 Рендер (один проход)...")
 
+    # Ожидаемая длительность выходного видео
+    expected_duration_sec = sum((s['end_ms'] - s['start_ms']) * s['slowdown'] for s in segments) / 1000.0
+
     cmd = [
         'ffmpeg', '-hide_banner', '-y',
         '-i', str(input_video),
@@ -375,20 +378,48 @@ def main():
         '-c:a', 'aac', '-b:a', '128k',
         '-r', str(fps),
         '-movflags', '+faststart',
+        '-progress', 'pipe:1',
         str(output_video)
     ]
 
     import time
     t0 = time.time()
-    result = subprocess.run(cmd, capture_output=True, text=True)
+
+    # Запускаем FFmpeg с отслеживанием прогресса
+    process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                universal_newlines=True, bufsize=1)
+
+    current_time = 0
+    while True:
+        line = process.stdout.readline()
+        if not line and process.poll() is not None:
+            break
+
+        if line.startswith('out_time_ms='):
+            try:
+                time_ms = int(line.split('=')[1].strip())
+                current_time = time_ms / 1000000.0  # микросекунды -> секунды
+                if expected_duration_sec > 0:
+                    percent = min(100, (current_time / expected_duration_sec) * 100)
+                    bar_len = 30
+                    filled = int(bar_len * percent / 100)
+                    bar = '█' * filled + '░' * (bar_len - filled)
+                    elapsed = time.time() - t0
+                    print(f"\r  [{bar}] {percent:5.1f}% | {current_time:.1f}s / {expected_duration_sec:.1f}s | ⏱ {elapsed:.0f}s", end='', flush=True)
+            except:
+                pass
+
+    process.wait()
     elapsed = time.time() - t0
+    print()  # Новая строка после прогресс-бара
 
     # Удаляем временный файл фильтра
     filter_file.unlink(missing_ok=True)
 
-    if result.returncode != 0:
+    if process.returncode != 0:
         print(f"❌ FFmpeg ошибка:")
-        print(result.stderr[-1000:] if result.stderr else "Unknown error")
+        stderr = process.stderr.read()
+        print(stderr[-1000:] if stderr else "Unknown error")
         input("Нажмите Enter для выхода...")
         sys.exit(1)
 
