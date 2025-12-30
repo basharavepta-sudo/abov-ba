@@ -215,6 +215,17 @@ def calculate_slowdown(text, duration_ms):
     return slowdown
 
 
+def get_real_duration_ms(video_path):
+    """Получает РЕАЛЬНУЮ длительность видео в мс через ffprobe"""
+    cmd = ['ffprobe', '-v', 'error', '-show_entries', 'format=duration',
+           '-of', 'default=noprint_wrappers=1:nokey=1', str(video_path)]
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        return int(float(result.stdout.strip()) * 1000)
+    except:
+        return 0
+
+
 def render_segment(idx, start_ms, end_ms, slowdown, input_video, temp_dir, encoder, enc_opts, fps):
     """Рендерит один сегмент видео"""
 
@@ -274,13 +285,19 @@ def render_segment(idx, start_ms, end_ms, slowdown, input_video, temp_dir, encod
         return None
 
     if output_file.exists() and output_file.stat().st_size > 0:
-        output_duration_ms = int(duration_sec * slowdown * 1000)
+        # РЕАЛЬНАЯ длительность вместо теоретической - избегаем рассинхрона!
+        real_duration_ms = get_real_duration_ms(output_file)
+        theoretical_ms = int(duration_sec * slowdown * 1000)
+        drift = real_duration_ms - theoretical_ms
+
         label = "SLOW" if slowdown > 1.01 else "NORM"
-        log(f"  ✅ Seg {idx:03d} | {label} x{slowdown:.2f} | {duration_sec:.1f}s → {output_duration_ms/1000:.1f}s | {elapsed:.1f}s")
+        drift_str = f" drift:{drift:+d}ms" if abs(drift) > 10 else ""
+        log(f"  ✅ Seg {idx:03d} | {label} x{slowdown:.2f} | {duration_sec:.1f}s → {real_duration_ms/1000:.1f}s | {elapsed:.1f}s{drift_str}")
+
         return {
             'idx': idx,
             'file': output_file,
-            'duration_ms': output_duration_ms
+            'duration_ms': real_duration_ms  # РЕАЛЬНАЯ длительность!
         }
 
     return None
@@ -301,7 +318,7 @@ def main():
     temp_dir = output_dir / 'temp_segments'
 
     print("\n" + "=" * 60)
-    print("  🎬 VIDEO SPEED ADJUSTER v5.1 (smooth threshold)")
+    print("  🎬 VIDEO SPEED ADJUSTER v5.2 (real duration sync)")
     print("=" * 60)
     print(f"  Target CPS: {TARGET_CPS}")
     print(f"  Soft threshold: {SOFT_THRESHOLD} (no slowdown below)")
