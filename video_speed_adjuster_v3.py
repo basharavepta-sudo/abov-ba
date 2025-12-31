@@ -376,7 +376,7 @@ def main():
     temp_dir = output_dir / 'temp_segments'
 
     print("\n" + "=" * 60)
-    print("  🎬 VIDEO SPEED ADJUSTER v5.9 (NVENC fix)")
+    print("  🎬 VIDEO SPEED ADJUSTER v6.0 (Windows fix)")
     print("=" * 60)
     print(f"  Target CPS: {TARGET_CPS}")
     print(f"  Soft threshold: {SOFT_THRESHOLD} (no slowdown below)")
@@ -571,13 +571,16 @@ def main():
     if use_mkvmerge:
         print("🔗 Склеивание через mkvmerge...")
         # mkvmerge: точнее работает с timestamps
-        # Формат: mkvmerge -o output.mkv file1.mp4 + file2.mp4 + ...
-        cmd = [mkvmerge_path, '-o', str(output_mkv)]
-        for i, r in enumerate(results):
-            if i > 0:
-                cmd.append('+')  # append mode
-            cmd.append(str(r['file'].absolute()))
+        # Используем файл опций чтобы обойти лимит длины командной строки Windows
+        options_file = temp_dir / 'mkvmerge_options.txt'
+        with open(options_file, 'w', encoding='utf-8') as f:
+            f.write(f'-o\n{output_mkv}\n')
+            for i, r in enumerate(results):
+                if i > 0:
+                    f.write('+\n')  # append mode
+                f.write(f'{r["file"].absolute()}\n')
 
+        cmd = [mkvmerge_path, f'@{options_file}']
         concat_result = subprocess.run(cmd, capture_output=True, text=True)
         if concat_result.returncode not in [0, 1]:  # mkvmerge returns 1 for warnings
             print(f"❌ Ошибка mkvmerge: {concat_result.stderr[:200] if concat_result.stderr else 'unknown'}")
@@ -691,4 +694,12 @@ def main():
 
 
 if __name__ == '__main__':
-    main()
+    try:
+        main()
+    except Exception as e:
+        print(f"\n❌ ОШИБКА: {e}")
+        import traceback
+        traceback.print_exc()
+    finally:
+        if sys.platform == 'win32':
+            input("\nНажми Enter чтобы закрыть...")
