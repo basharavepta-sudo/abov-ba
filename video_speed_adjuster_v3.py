@@ -581,9 +581,23 @@ def main():
                 f.write(f'{r["file"].absolute()}\n')
 
         cmd = [mkvmerge_path, f'@{options_file}']
+        print(f"   Файлов для склейки: {len(results)}")
         concat_result = subprocess.run(cmd, capture_output=True, text=True)
         if concat_result.returncode not in [0, 1]:  # mkvmerge returns 1 for warnings
-            print(f"❌ Ошибка mkvmerge: {concat_result.stderr[:200] if concat_result.stderr else 'unknown'}")
+            print(f"❌ Ошибка mkvmerge (код {concat_result.returncode}):")
+            if concat_result.stdout:
+                print(f"   stdout: {concat_result.stdout[:500]}")
+            if concat_result.stderr:
+                print(f"   stderr: {concat_result.stderr[:500]}")
+            # Показываем начало файла опций
+            try:
+                with open(options_file, 'r', encoding='utf-8') as f:
+                    lines = f.readlines()[:10]
+                print(f"   Первые строки {options_file}:")
+                for line in lines:
+                    print(f"      {line.rstrip()}")
+            except:
+                pass
             sys.exit(1)
 
         if not output_mkv.exists() or output_mkv.stat().st_size == 0:
