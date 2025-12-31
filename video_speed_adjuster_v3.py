@@ -29,6 +29,34 @@ def log(msg):
         print(msg)
 
 
+def find_mkvmerge():
+    """Находит mkvmerge - сначала в PATH, потом в стандартных местах Windows"""
+    # Сначала пробуем просто mkvmerge (в PATH)
+    try:
+        result = subprocess.run(['mkvmerge', '--version'], capture_output=True, text=True, check=True)
+        return 'mkvmerge', result.stdout.split('\n')[0] if result.stdout else 'unknown'
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        pass
+
+    # На Windows проверяем стандартные пути установки
+    if sys.platform == 'win32':
+        common_paths = [
+            r'C:\Program Files\MKVToolNix\mkvmerge.exe',
+            r'C:\Program Files (x86)\MKVToolNix\mkvmerge.exe',
+            os.path.expanduser(r'~\AppData\Local\MKVToolNix\mkvmerge.exe'),
+        ]
+
+        for path in common_paths:
+            if os.path.exists(path):
+                try:
+                    result = subprocess.run([path, '--version'], capture_output=True, text=True, check=True)
+                    return path, result.stdout.split('\n')[0] if result.stdout else 'unknown'
+                except:
+                    pass
+
+    return None, None
+
+
 def time_to_ms(time_str):
     """00:01:23,456 -> миллисекунды"""
     match = re.match(r'(\d+):(\d+):(\d+)[,.](\d+)', time_str.strip())
@@ -348,7 +376,7 @@ def main():
     temp_dir = output_dir / 'temp_segments'
 
     print("\n" + "=" * 60)
-    print("  🎬 VIDEO SPEED ADJUSTER v5.7 (mkvmerge concat)")
+    print("  🎬 VIDEO SPEED ADJUSTER v5.8 (mkvmerge auto-detect)")
     print("=" * 60)
     print(f"  Target CPS: {TARGET_CPS}")
     print(f"  Soft threshold: {SOFT_THRESHOLD} (no slowdown below)")
@@ -421,15 +449,18 @@ def main():
     print(f"🔧 Энкодер: {encoder}")
 
     # Проверяем mkvmerge СРАЗУ, чтобы не ждать час
-    try:
-        result = subprocess.run(['mkvmerge', '--version'], capture_output=True, text=True, check=True)
-        mkvmerge_version = result.stdout.split('\n')[0] if result.stdout else 'unknown'
+    mkvmerge_path, mkvmerge_version = find_mkvmerge()
+    if mkvmerge_path:
         use_mkvmerge = True
         print(f"🔗 mkvmerge: {mkvmerge_version}")
-    except (subprocess.CalledProcessError, FileNotFoundError):
+        if mkvmerge_path != 'mkvmerge':
+            print(f"   Путь: {mkvmerge_path}")
+    else:
         use_mkvmerge = False
         print("⚠️ mkvmerge НЕ НАЙДЕН - будет использоваться ffmpeg concat (менее точный)")
         print("   Установи: https://mkvtoolnix.download/downloads.html")
+        if sys.platform == 'win32':
+            print("   (Проверены пути: Program Files, Program Files (x86))")
 
     # === СТРОИМ СЕГМЕНТЫ ===
     print("\n🔍 Анализ...")
@@ -541,7 +572,7 @@ def main():
         print("🔗 Склеивание через mkvmerge...")
         # mkvmerge: точнее работает с timestamps
         # Формат: mkvmerge -o output.mkv file1.mp4 + file2.mp4 + ...
-        cmd = ['mkvmerge', '-o', str(output_mkv)]
+        cmd = [mkvmerge_path, '-o', str(output_mkv)]
         for i, r in enumerate(results):
             if i > 0:
                 cmd.append('+')  # append mode
