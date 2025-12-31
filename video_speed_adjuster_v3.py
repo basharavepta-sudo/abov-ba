@@ -377,7 +377,7 @@ def main():
     temp_dir = output_dir / 'temp_segments'
 
     print("\n" + "=" * 60)
-    print("  🎬 VIDEO SPEED ADJUSTER v6.0 (Windows fix)")
+    print("  🎬 VIDEO SPEED ADJUSTER v6.1 (ffmpeg concat)")
     print("=" * 60)
     print(f"  Target CPS: {TARGET_CPS}")
     print(f"  Soft threshold: {SOFT_THRESHOLD} (no slowdown below)")
@@ -450,18 +450,9 @@ def main():
     print(f"🔧 Энкодер: {encoder}")
 
     # Проверяем mkvmerge СРАЗУ, чтобы не ждать час
-    mkvmerge_path, mkvmerge_version = find_mkvmerge()
-    if mkvmerge_path:
-        use_mkvmerge = True
-        print(f"🔗 mkvmerge: {mkvmerge_version}")
-        if mkvmerge_path != 'mkvmerge':
-            print(f"   Путь: {mkvmerge_path}")
-    else:
-        use_mkvmerge = False
-        print("⚠️ mkvmerge НЕ НАЙДЕН - будет использоваться ffmpeg concat (менее точный)")
-        print("   Установи: https://mkvtoolnix.download/downloads.html")
-        if sys.platform == 'win32':
-            print("   (Проверены пути: Program Files, Program Files (x86))")
+    # ОТКЛЮЧЕНО - mkvmerge добавляет drift, ffmpeg concat работает лучше
+    use_mkvmerge = False
+    print("🔗 Будет использоваться ffmpeg concat")
 
     # === СТРОИМ СЕГМЕНТЫ ===
     print("\n🔍 Анализ...")
@@ -642,19 +633,16 @@ def main():
         print("❌ Выходное видео не создано!")
         sys.exit(1)
 
-    # === КОРРЕКЦИЯ DRIFT ===
-    # Сравниваем реальную длительность видео с суммой длительностей сегментов
+    # === ИНФОРМАЦИЯ О DRIFT ===
     expected_duration = sum(r['duration_ms'] for r in results)
     actual_duration = get_real_duration_ms(output_video, fallback_ms=expected_duration)
-
     drift_total = actual_duration - expected_duration
-    drift_percent = (drift_total / expected_duration * 100) if expected_duration > 0 else 0
 
-    if abs(drift_total) > 100:  # больше 100ms
-        print(f"⚠️ Обнаружен drift: {drift_total:+d}ms ({drift_percent:+.2f}%) - корректируем субтитры...")
-        scale = actual_duration / expected_duration
+    # НЕ корректируем - доверяем накопленным длительностям сегментов
+    scale = 1.0
+    if abs(drift_total) > 100:
+        print(f"ℹ️ Drift контейнера: {drift_total:+d}ms (игнорируем)")
     else:
-        scale = 1.0
         print(f"✅ Drift минимальный: {drift_total:+d}ms")
 
     # === СУБТИТРЫ ===
@@ -696,9 +684,7 @@ def main():
     print(f"   Видео: {output_video.name}")
     print(f"   Субтитры: {output_srt.name}")
     print(f"   Было: {ms_to_time(video_duration)}")
-    print(f"   Стало: {ms_to_time(actual_duration)} (реальная длительность)")
-    if abs(drift_total) > 100:
-        print(f"   Drift скорректирован: {drift_total:+d}ms → 0ms")
+    print(f"   Стало: {ms_to_time(expected_duration)} (сумма сегментов)")
     print(f"   Средний CPS: {avg_cps:.1f} (цель: {TARGET_CPS})")
     print(f"{'=' * 60}\n")
 
