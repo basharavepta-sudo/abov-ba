@@ -10,11 +10,14 @@ import os
 from pathlib import Path
 
 try:
-    from moviepy.editor import VideoFileClip, concatenate_videoclips
-    from moviepy.video.fx.speedx import speedx
+    from moviepy import VideoFileClip, concatenate_videoclips
 except ImportError:
-    print("❌ Установи moviepy: pip install moviepy")
-    sys.exit(1)
+    try:
+        # Старая версия MoviePy
+        from moviepy.editor import VideoFileClip, concatenate_videoclips
+    except ImportError:
+        print("❌ Установи moviepy: pip install moviepy")
+        sys.exit(1)
 
 # === НАСТРОЙКИ ===
 TARGET_CPS = 16.0
@@ -240,9 +243,9 @@ def main():
         # Вырезаем кусок
         clip = video.subclip(start_sec, end_sec)
 
-        # Замедляем если нужно (speedx < 1 = медленнее)
+        # Замедляем если нужно (factor < 1 = медленнее)
         if slowdown > 1.01:
-            clip = speedx(clip, 1.0 / slowdown)
+            clip = clip.with_speed_scaled(1.0 / slowdown)
 
         clips.append(clip)
 
