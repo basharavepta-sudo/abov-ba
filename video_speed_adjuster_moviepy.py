@@ -240,8 +240,8 @@ def main():
         if end_sec <= start_sec:
             continue
 
-        # Вырезаем кусок
-        clip = video.subclip(start_sec, end_sec)
+        # Вырезаем кусок (MoviePy 2.x API)
+        clip = video.subclipped(start_sec, end_sec)
 
         # Замедляем если нужно (factor < 1 = медленнее)
         if slowdown > 1.01:
