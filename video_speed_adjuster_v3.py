@@ -179,11 +179,11 @@ def get_encoder():
     except:
         return 'libx264', ['-preset', 'fast', '-crf', '20']
 
-    # Тест энкодера
+    # Тест энкодера (256x256 - NVENC требует минимум ~145px)
     def test(enc):
         try:
             cmd = ['ffmpeg', '-hide_banner', '-y', '-f', 'lavfi',
-                   '-i', 'color=black:s=64x64:d=0.1', '-c:v', enc, '-f', 'null', '-']
+                   '-i', 'color=black:s=256x256:d=0.1', '-c:v', enc, '-f', 'null', '-']
             return subprocess.run(cmd, capture_output=True, timeout=10).returncode == 0
         except:
             return False
@@ -376,7 +376,7 @@ def main():
     temp_dir = output_dir / 'temp_segments'
 
     print("\n" + "=" * 60)
-    print("  🎬 VIDEO SPEED ADJUSTER v5.8 (mkvmerge auto-detect)")
+    print("  🎬 VIDEO SPEED ADJUSTER v5.9 (NVENC fix)")
     print("=" * 60)
     print(f"  Target CPS: {TARGET_CPS}")
     print(f"  Soft threshold: {SOFT_THRESHOLD} (no slowdown below)")
