@@ -348,7 +348,7 @@ def main():
     temp_dir = output_dir / 'temp_segments'
 
     print("\n" + "=" * 60)
-    print("  🎬 VIDEO SPEED ADJUSTER v5.5 (final)")
+    print("  🎬 VIDEO SPEED ADJUSTER v5.6 (drift correction)")
     print("=" * 60)
     print(f"  Target CPS: {TARGET_CPS}")
     print(f"  Soft threshold: {SOFT_THRESHOLD} (no slowdown below)")
@@ -549,10 +549,25 @@ def main():
         print("❌ Выходное видео не создано!")
         sys.exit(1)
 
+    # === КОРРЕКЦИЯ DRIFT ===
+    # Сравниваем реальную длительность видео с суммой длительностей сегментов
+    expected_duration = sum(r['duration_ms'] for r in results)
+    actual_duration = get_real_duration_ms(output_video, fallback_ms=expected_duration)
+
+    drift_total = actual_duration - expected_duration
+    drift_percent = (drift_total / expected_duration * 100) if expected_duration > 0 else 0
+
+    if abs(drift_total) > 100:  # больше 100ms
+        print(f"⚠️ Обнаружен drift: {drift_total:+d}ms ({drift_percent:+.2f}%) - корректируем субтитры...")
+        scale = actual_duration / expected_duration
+    else:
+        scale = 1.0
+        print(f"✅ Drift минимальный: {drift_total:+d}ms")
+
     # === СУБТИТРЫ ===
     print("✍️ Генерация субтитров...")
 
-    # Позиции в выходном видео
+    # Позиции в выходном видео (с учётом scale)
     new_pos = 0
     srt_lines = []
 
@@ -562,8 +577,11 @@ def main():
         text = r['text']
 
         if sub_index is not None and text:
-            start_time = ms_to_time(new_pos)
-            end_time = ms_to_time(new_pos + duration)
+            # Применяем масштабирование для компенсации drift
+            scaled_start = int(new_pos * scale)
+            scaled_end = int((new_pos + duration) * scale)
+            start_time = ms_to_time(scaled_start)
+            end_time = ms_to_time(scaled_end)
             srt_lines.append(f"{sub_index}\n{start_time} --> {end_time}\n{text}")
 
         new_pos += duration
@@ -577,16 +595,17 @@ def main():
     shutil.rmtree(temp_dir, ignore_errors=True)
 
     # === ИТОГ ===
-    total_duration = sum(r['duration_ms'] for r in results)
     total_chars = sum(len(r['text']) for r in results if r['text'])
-    avg_cps = total_chars / (total_duration / 1000) if total_duration > 0 else 0
+    avg_cps = total_chars / (actual_duration / 1000) if actual_duration > 0 else 0
 
     print(f"\n{'=' * 60}")
     print(f"✅ ГОТОВО!")
     print(f"   Видео: {output_video.name}")
     print(f"   Субтитры: {output_srt.name}")
     print(f"   Было: {ms_to_time(video_duration)}")
-    print(f"   Стало: {ms_to_time(total_duration)}")
+    print(f"   Стало: {ms_to_time(actual_duration)} (реальная длительность)")
+    if abs(drift_total) > 100:
+        print(f"   Drift скорректирован: {drift_total:+d}ms → 0ms")
     print(f"   Средний CPS: {avg_cps:.1f} (цель: {TARGET_CPS})")
     print(f"{'=' * 60}\n")
 
