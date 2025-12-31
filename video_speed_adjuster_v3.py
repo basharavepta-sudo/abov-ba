@@ -12,6 +12,7 @@ import subprocess
 import os
 import shutil
 import time
+import json
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import threading
@@ -571,14 +572,16 @@ def main():
     if use_mkvmerge:
         print("🔗 Склеивание через mkvmerge...")
         # mkvmerge: точнее работает с timestamps
-        # Используем файл опций чтобы обойти лимит длины командной строки Windows
-        options_file = temp_dir / 'mkvmerge_options.txt'
+        # Используем JSON файл опций чтобы обойти лимит длины командной строки Windows
+        options_file = temp_dir / 'mkvmerge_options.json'
+        options = ['-o', str(output_mkv)]
+        for i, r in enumerate(results):
+            if i > 0:
+                options.append('+')  # append mode
+            options.append(str(r['file'].absolute()))
+
         with open(options_file, 'w', encoding='utf-8') as f:
-            f.write(f'-o\n{output_mkv}\n')
-            for i, r in enumerate(results):
-                if i > 0:
-                    f.write('+\n')  # append mode
-                f.write(f'{r["file"].absolute()}\n')
+            json.dump(options, f)
 
         cmd = [mkvmerge_path, f'@{options_file}']
         print(f"   Файлов для склейки: {len(results)}")
@@ -589,15 +592,8 @@ def main():
                 print(f"   stdout: {concat_result.stdout[:500]}")
             if concat_result.stderr:
                 print(f"   stderr: {concat_result.stderr[:500]}")
-            # Показываем начало файла опций
-            try:
-                with open(options_file, 'r', encoding='utf-8') as f:
-                    lines = f.readlines()[:10]
-                print(f"   Первые строки {options_file}:")
-                for line in lines:
-                    print(f"      {line.rstrip()}")
-            except:
-                pass
+            # Показываем начало опций
+            print(f"   Первые опции: {options[:10]}...")
             sys.exit(1)
 
         if not output_mkv.exists() or output_mkv.stat().st_size == 0:
