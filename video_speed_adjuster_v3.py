@@ -420,6 +420,17 @@ def main():
     encoder, enc_opts = get_encoder()
     print(f"🔧 Энкодер: {encoder}")
 
+    # Проверяем mkvmerge СРАЗУ, чтобы не ждать час
+    try:
+        result = subprocess.run(['mkvmerge', '--version'], capture_output=True, text=True, check=True)
+        mkvmerge_version = result.stdout.split('\n')[0] if result.stdout else 'unknown'
+        use_mkvmerge = True
+        print(f"🔗 mkvmerge: {mkvmerge_version}")
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        use_mkvmerge = False
+        print("⚠️ mkvmerge НЕ НАЙДЕН - будет использоваться ffmpeg concat (менее точный)")
+        print("   Установи: https://mkvtoolnix.download/downloads.html")
+
     # === СТРОИМ СЕГМЕНТЫ ===
     print("\n🔍 Анализ...")
 
@@ -524,19 +535,10 @@ def main():
             print(f"⚠️ {len(missing)} gap-сегментов пропущено (не критично)")
 
     # === СКЛЕЙКА ===
-    print("🔗 Склеивание через mkvmerge...")
-
-    # Проверяем наличие mkvmerge
-    try:
-        subprocess.run(['mkvmerge', '--version'], capture_output=True, check=True)
-        use_mkvmerge = True
-    except (subprocess.CalledProcessError, FileNotFoundError):
-        print("⚠️ mkvmerge не найден, используем ffmpeg concat...")
-        use_mkvmerge = False
-
     output_mkv = output_dir / 'output_adjusted.mkv'
 
     if use_mkvmerge:
+        print("🔗 Склеивание через mkvmerge...")
         # mkvmerge: точнее работает с timestamps
         # Формат: mkvmerge -o output.mkv file1.mp4 + file2.mp4 + ...
         cmd = ['mkvmerge', '-o', str(output_mkv)]
@@ -572,6 +574,7 @@ def main():
 
     else:
         # Fallback на ffmpeg concat
+        print("🔗 Склеивание через ffmpeg concat...")
         concat_file = temp_dir / 'concat.txt'
         with open(concat_file, 'w') as f:
             for r in results:
