@@ -348,7 +348,7 @@ def main():
     temp_dir = output_dir / 'temp_segments'
 
     print("\n" + "=" * 60)
-    print("  🎬 VIDEO SPEED ADJUSTER v5.6 (drift correction)")
+    print("  🎬 VIDEO SPEED ADJUSTER v5.7 (mkvmerge concat)")
     print("=" * 60)
     print(f"  Target CPS: {TARGET_CPS}")
     print(f"  Soft threshold: {SOFT_THRESHOLD} (no slowdown below)")
@@ -524,26 +524,72 @@ def main():
             print(f"⚠️ {len(missing)} gap-сегментов пропущено (не критично)")
 
     # === СКЛЕЙКА ===
-    print("🔗 Склеивание...")
+    print("🔗 Склеивание через mkvmerge...")
 
-    concat_file = temp_dir / 'concat.txt'
-    with open(concat_file, 'w') as f:
-        for r in results:
-            path = str(r['file'].absolute()).replace("'", "'\\''")
-            f.write(f"file '{path}'\n")
+    # Проверяем наличие mkvmerge
+    try:
+        subprocess.run(['mkvmerge', '--version'], capture_output=True, check=True)
+        use_mkvmerge = True
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        print("⚠️ mkvmerge не найден, используем ffmpeg concat...")
+        use_mkvmerge = False
 
-    cmd = [
-        'ffmpeg', '-hide_banner', '-y',
-        '-f', 'concat', '-safe', '0',
-        '-i', str(concat_file),
-        '-c', 'copy',
-        '-movflags', '+faststart',
-        str(output_video)
-    ]
-    concat_result = subprocess.run(cmd, capture_output=True, text=True)
-    if concat_result.returncode != 0:
-        print(f"❌ Ошибка склейки: {concat_result.stderr[:200] if concat_result.stderr else 'unknown'}")
-        sys.exit(1)
+    output_mkv = output_dir / 'output_adjusted.mkv'
+
+    if use_mkvmerge:
+        # mkvmerge: точнее работает с timestamps
+        # Формат: mkvmerge -o output.mkv file1.mp4 + file2.mp4 + ...
+        cmd = ['mkvmerge', '-o', str(output_mkv)]
+        for i, r in enumerate(results):
+            if i > 0:
+                cmd.append('+')  # append mode
+            cmd.append(str(r['file'].absolute()))
+
+        concat_result = subprocess.run(cmd, capture_output=True, text=True)
+        if concat_result.returncode not in [0, 1]:  # mkvmerge returns 1 for warnings
+            print(f"❌ Ошибка mkvmerge: {concat_result.stderr[:200] if concat_result.stderr else 'unknown'}")
+            sys.exit(1)
+
+        if not output_mkv.exists() or output_mkv.stat().st_size == 0:
+            print("❌ MKV не создан!")
+            sys.exit(1)
+
+        # Конвертируем MKV → MP4 (быстро, просто перепаковка)
+        print("📦 Конвертация MKV → MP4...")
+        cmd_convert = [
+            'ffmpeg', '-hide_banner', '-y',
+            '-i', str(output_mkv),
+            '-c', 'copy',
+            '-movflags', '+faststart',
+            str(output_video)
+        ]
+        convert_result = subprocess.run(cmd_convert, capture_output=True, text=True)
+        if convert_result.returncode != 0:
+            print(f"⚠️ Конвертация в MP4 не удалась, оставляем MKV")
+            output_video = output_mkv
+        else:
+            output_mkv.unlink()  # удаляем промежуточный MKV
+
+    else:
+        # Fallback на ffmpeg concat
+        concat_file = temp_dir / 'concat.txt'
+        with open(concat_file, 'w') as f:
+            for r in results:
+                path = str(r['file'].absolute()).replace("'", "'\\''")
+                f.write(f"file '{path}'\n")
+
+        cmd = [
+            'ffmpeg', '-hide_banner', '-y',
+            '-f', 'concat', '-safe', '0',
+            '-i', str(concat_file),
+            '-c', 'copy',
+            '-movflags', '+faststart',
+            str(output_video)
+        ]
+        concat_result = subprocess.run(cmd, capture_output=True, text=True)
+        if concat_result.returncode != 0:
+            print(f"❌ Ошибка склейки: {concat_result.stderr[:200] if concat_result.stderr else 'unknown'}")
+            sys.exit(1)
 
     if not output_video.exists() or output_video.stat().st_size == 0:
         print("❌ Выходное видео не создано!")
