@@ -197,15 +197,22 @@ def check_nvidia_gpu() -> tuple[bool, str]:
             capture_output=True, text=True, timeout=10
         )
         if 'h264_nvenc' in ffmpeg_check.stdout:
+            print("   h264_nvenc найден в ffmpeg, тестируем...")
             # Тестируем кодек
             test_cmd = [
                 'ffmpeg', '-hide_banner', '-y',
                 '-f', 'lavfi', '-i', 'color=black:s=64x64:d=0.1',
                 '-c:v', 'h264_nvenc', '-f', 'null', '-'
             ]
-            test_result = subprocess.run(test_cmd, capture_output=True, timeout=10)
+            test_result = subprocess.run(test_cmd, capture_output=True, text=True, timeout=10)
             if test_result.returncode == 0:
                 return True, 'h264_nvenc'
+            else:
+                # Показываем почему не работает
+                err = test_result.stderr[:200] if test_result.stderr else "unknown error"
+                print(f"   NVENC тест не прошёл: {err}")
+        else:
+            print("   h264_nvenc не найден в ffmpeg (нужна сборка с NVENC)")
 
         return False, 'libx264'
     except Exception as e:
