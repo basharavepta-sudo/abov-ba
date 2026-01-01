@@ -313,28 +313,23 @@ def process_segment_batch(
                 # Сохраняем сегмент
                 output_file = temp_dir / f"seg_{global_idx:05d}.mp4"
 
-                # Параметры ffmpeg
-                ffmpeg_params = get_ffmpeg_params(encoder)
-                ffmpeg_params.extend(['-c:a', 'aac', '-b:a', '128k'])
-
-                # MoviePy 2.x имеет другие параметры write_videofile
+                # MoviePy 2.x - простые параметры без конфликтов
                 if moviepy_version >= 2:
-                    # В MoviePy 2.x logger=None вызывает баг, используем "bar"
                     clip.write_videofile(
                         str(output_file),
                         fps=fps,
-                        codec=encoder if encoder == 'h264_nvenc' else 'libx264',
+                        codec='libx264',
                         audio_codec='aac',
-                        ffmpeg_params=ffmpeg_params,
-                        logger="bar"  # "bar" = прогресс-бар, None вызывает баг
+                        bitrate='5000k',
+                        logger="bar"
                     )
                 else:
                     clip.write_videofile(
                         str(output_file),
                         fps=fps,
-                        codec=encoder if encoder == 'h264_nvenc' else 'libx264',
+                        codec='libx264',
                         audio_codec='aac',
-                        ffmpeg_params=ffmpeg_params,
+                        bitrate='5000k',
                         threads=4,
                         logger=None,
                         verbose=False
