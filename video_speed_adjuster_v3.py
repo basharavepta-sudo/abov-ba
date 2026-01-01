@@ -267,6 +267,82 @@ def speedx_compat(clip, factor, version):
         return speedx(clip, factor)
 
 
+def render_segment_ffmpeg(
+    input_video: str,
+    start: float,
+    end: float,
+    slowdown: float,
+    output_file: Path,
+    fps: float
+) -> bool:
+    """
+    Рендерит сегмент через ffmpeg напрямую.
+    Надёжнее чем MoviePy write_videofile.
+    """
+    duration = end - start
+
+    # Seek чуть раньше для точности
+    seek = max(0, start - 0.5)
+    rel_start = start - seek
+    rel_end = end - seek
+
+    # Видео фильтр: trim + setpts для замедления
+    # setpts=2.0*PTS означает в 2 раза медленнее
+    vf = f"trim=start={rel_start:.4f}:end={rel_end:.4f},setpts={slowdown:.4f}*(PTS-STARTPTS)"
+
+    # Аудио: atempo работает наоборот (0.5 = замедление в 2 раза)
+    # atempo принимает значения от 0.5 до 2.0, поэтому нужна цепочка
+    tempo = 1.0 / slowdown
+    atempo_chain = []
+    t = tempo
+    while t < 0.5:
+        atempo_chain.append("atempo=0.5")
+        t /= 0.5
+    while t > 2.0:
+        atempo_chain.append("atempo=2.0")
+        t /= 2.0
+    atempo_chain.append(f"atempo={t:.4f}")
+
+    af = f"atrim=start={rel_start:.4f}:end={rel_end:.4f},asetpts=PTS-STARTPTS,{','.join(atempo_chain)}"
+
+    filter_complex = f'[0:v]{vf}[v];[0:a]{af}[a]'
+
+    cmd = [
+        'ffmpeg', '-hide_banner', '-y',
+        '-ss', f'{seek:.3f}',
+        '-i', str(input_video),
+        '-filter_complex', filter_complex,
+        '-map', '[v]', '-map', '[a]',
+        '-c:v', 'libx264', '-preset', 'fast', '-crf', '20',
+        '-c:a', 'aac', '-b:a', '128k',
+        '-r', str(int(fps)),
+        '-avoid_negative_ts', 'make_zero',
+        '-fflags', '+genpts',
+        '-loglevel', 'error',
+        str(output_file)
+    ]
+
+    result = subprocess.run(cmd, capture_output=True, text=True)
+
+    if result.returncode != 0:
+        # Попробуем без аудио если ошибка
+        cmd_no_audio = [
+            'ffmpeg', '-hide_banner', '-y',
+            '-ss', f'{seek:.3f}',
+            '-i', str(input_video),
+            '-vf', vf,
+            '-c:v', 'libx264', '-preset', 'fast', '-crf', '20',
+            '-an',
+            '-r', str(int(fps)),
+            '-avoid_negative_ts', 'make_zero',
+            '-loglevel', 'error',
+            str(output_file)
+        ]
+        result = subprocess.run(cmd_no_audio, capture_output=True, text=True)
+
+    return output_file.exists() and output_file.stat().st_size > 1000
+
+
 def process_segment_batch(
     video_path: str,
     segments: List[Dict],
@@ -276,89 +352,48 @@ def process_segment_batch(
     fps: float
 ) -> List[Dict]:
     """
-    Обрабатывает батч сегментов и сохраняет во временные файлы.
-    Возвращает информацию о сохранённых файлах.
+    Обрабатывает батч сегментов через ffmpeg.
     """
-    VideoFileClip, moviepy_version = get_moviepy_version()
-
     results = []
-    video = None
 
-    try:
-        video = VideoFileClip(video_path)
+    for idx, seg in enumerate(segments):
+        global_idx = batch_idx * BATCH_SIZE + idx
+        start = seg['start']
+        end = seg['end']
+        slowdown = seg['slowdown']
+        duration = end - start
 
-        for idx, seg in enumerate(segments):
-            global_idx = batch_idx * BATCH_SIZE + idx
-            start = seg['start']
-            end = seg['end']
-            slowdown = seg['slowdown']
-            duration = end - start
+        if duration < 0.04:  # Пропускаем слишком короткие
+            continue
 
-            if duration < 0.04:  # Пропускаем слишком короткие
-                continue
+        output_file = temp_dir / f"seg_{global_idx:05d}.mp4"
 
-            try:
-                # Вырезаем сегмент (совместимо с 1.x и 2.x)
-                clip = subclip_compat(video, start, end, moviepy_version)
+        if slowdown > 1.01:
+            new_duration = duration * slowdown
+        else:
+            new_duration = duration
 
-                # Применяем замедление если нужно
-                # factor < 1 = замедление
-                if slowdown > 1.01:
-                    speed_factor = 1.0 / slowdown
-                    clip = speedx_compat(clip, speed_factor, moviepy_version)
-                    new_duration = duration * slowdown
-                else:
-                    new_duration = duration
+        success = render_segment_ffmpeg(
+            input_video=video_path,
+            start=start,
+            end=end,
+            slowdown=slowdown,
+            output_file=output_file,
+            fps=fps
+        )
 
-                # Сохраняем сегмент
-                output_file = temp_dir / f"seg_{global_idx:05d}.mp4"
-
-                # MoviePy 2.x - простые параметры без конфликтов
-                if moviepy_version >= 2:
-                    clip.write_videofile(
-                        str(output_file),
-                        fps=fps,
-                        codec='libx264',
-                        audio_codec='aac',
-                        bitrate='5000k',
-                        logger="bar"
-                    )
-                else:
-                    clip.write_videofile(
-                        str(output_file),
-                        fps=fps,
-                        codec='libx264',
-                        audio_codec='aac',
-                        bitrate='5000k',
-                        threads=4,
-                        logger=None,
-                        verbose=False
-                    )
-
-                clip.close()
-
-                results.append({
-                    'idx': global_idx,
-                    'file': output_file,
-                    'duration': new_duration,
-                    'sub_index': seg['sub_index'],
-                    'text': seg['text']
-                })
-
-                label = "SLOW" if slowdown > 1.01 else "NORM"
-                print(f"   ✅ Seg {global_idx+1:03d} | {label} x{slowdown:.2f} | {duration:.1f}s → {new_duration:.1f}s")
-
-            except Exception as e:
-                print(f"   ❌ Seg {global_idx+1}: {str(e)[:50]}")
-                continue
-
-    except Exception as e:
-        print(f"   ❌ Ошибка батча {batch_idx}: {e}")
-
-    finally:
-        if video:
-            video.close()
-        gc.collect()
+        if success:
+            results.append({
+                'idx': global_idx,
+                'file': output_file,
+                'duration': new_duration,
+                'sub_index': seg['sub_index'],
+                'text': seg['text']
+            })
+            label = "SLOW" if slowdown > 1.01 else "NORM"
+            print(f"   ✅ Seg {global_idx+1:03d} | {label} x{slowdown:.2f} | {duration:.1f}s → {new_duration:.1f}s")
+        else:
+            print(f"   ❌ Seg {global_idx+1}: ffmpeg failed")
 
     return results
 
