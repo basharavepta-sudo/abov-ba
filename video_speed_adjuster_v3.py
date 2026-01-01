@@ -1,17 +1,17 @@
 #!/usr/bin/env python3
 """
-Video Speed Adjuster v6.1 - Pure MoviePy 2.x Edition
+Video Speed Adjuster v6.2 - MoviePy 2.x with Chunked Processing
 
 Замедляет видео на основе CPS (символов в секунду) для комфортной озвучки.
-Использует MoviePy 2.x для обработки видео.
+Обработка ЧАНКАМИ для экономии памяти.
 
 Логика:
-1. Парсим SRT субтитры (получаем начало/конец каждого субтитра)
-2. Парсим русский перевод (текст для расчёта CPS)
-3. Для каждого субтитра вычисляем CPS = символы / длительность
-4. Если CPS > порога - замедляем этот сегмент видео
-5. Склеиваем все сегменты в памяти
-6. Записываем один раз в конце
+1. Парсим SRT субтитры
+2. Парсим русский перевод
+3. Вычисляем CPS и замедление для каждого субтитра
+4. Обрабатываем ЧАНКАМИ по N сегментов
+5. Каждый чанк записываем во временный файл
+6. Склеиваем все чанки через ffmpeg
 
 Требования:
     pip install moviepy
@@ -23,6 +23,9 @@ import re
 import os
 import sys
 import gc
+import shutil
+import subprocess
+import tempfile
 from pathlib import Path
 from typing import List, Dict, Optional
 
@@ -30,11 +33,12 @@ from typing import List, Dict, Optional
 TARGET_CPS = 16.0        # Целевой CPS после замедления
 SOFT_THRESHOLD = 16.0    # Ниже этого - не трогаем
 HARD_THRESHOLD = 20.0    # Выше этого - полное замедление
-MAX_SLOWDOWN = 3.0       # Максимальное замедление (3x = в 3 раза медленнее)
+MAX_SLOWDOWN = 3.0       # Максимальное замедление
+CHUNK_SIZE = 50          # Сегментов в одном чанке (меньше = меньше RAM)
 
 
 def time_to_seconds(time_str: str) -> float:
-    """Конвертирует '00:01:23,456' в секунды (float)"""
+    """Конвертирует '00:01:23,456' в секунды"""
     match = re.match(r'(\d+):(\d+):(\d+)[,.](\d+)', time_str.strip())
     if not match:
         return 0.0
@@ -44,7 +48,7 @@ def time_to_seconds(time_str: str) -> float:
 
 
 def seconds_to_srt_time(seconds: float) -> str:
-    """Конвертирует секунды в формат SRT '00:01:23,456'"""
+    """Конвертирует секунды в формат SRT"""
     if seconds < 0:
         seconds = 0
     h = int(seconds // 3600)
@@ -98,7 +102,7 @@ def parse_srt(content: str) -> List[Dict]:
 
 
 def parse_numbered_text(content: str) -> List[str]:
-    """Парсит нумерованный текстовый файл."""
+    """Парсит нумерованный текст."""
     lines = []
     for line in content.replace('\r', '').split('\n'):
         line = line.strip()
@@ -121,7 +125,7 @@ def read_file_with_encoding(path: Path) -> Optional[str]:
 
 
 def calculate_slowdown(text: str, duration_sec: float) -> float:
-    """Вычисляет коэффициент замедления на основе CPS."""
+    """Вычисляет коэффициент замедления."""
     if not text or duration_sec <= 0:
         return 1.0
 
@@ -141,8 +145,127 @@ def calculate_slowdown(text: str, duration_sec: float) -> float:
     else:
         slowdown = full_slowdown
 
-    slowdown = min(slowdown, MAX_SLOWDOWN)
-    return slowdown
+    return min(slowdown, MAX_SLOWDOWN)
+
+
+def process_chunk(
+    video_path: str,
+    segments: List[Dict],
+    output_file: Path,
+    fps: float,
+    chunk_idx: int,
+    total_chunks: int
+) -> tuple[bool, float]:
+    """
+    Обрабатывает один чанк сегментов через MoviePy.
+    Возвращает (успех, длительность_чанка)
+    """
+    from moviepy import VideoFileClip, concatenate_videoclips
+
+    print(f"\n   📦 Чанк {chunk_idx + 1}/{total_chunks} ({len(segments)} сегментов)")
+
+    video = None
+    clips = []
+    chunk_duration = 0.0
+
+    try:
+        video = VideoFileClip(video_path)
+
+        for seg in segments:
+            start = seg['start']
+            end = seg['end']
+            slowdown = seg['slowdown']
+            duration = end - start
+
+            if duration < 0.04:
+                continue
+
+            # Вырезаем сегмент
+            clip = video.subclipped(start, end)
+
+            # Замедляем если нужно
+            if slowdown > 1.01:
+                speed_factor = 1.0 / slowdown
+                clip = clip.with_speed_scaled(speed_factor)
+                new_duration = duration * slowdown
+            else:
+                new_duration = duration
+
+            clips.append(clip)
+            chunk_duration += new_duration
+
+        if not clips:
+            return False, 0.0
+
+        # Склеиваем клипы чанка
+        if len(clips) == 1:
+            final_chunk = clips[0]
+        else:
+            final_chunk = concatenate_videoclips(clips, method="compose")
+
+        # Записываем чанк
+        final_chunk.write_videofile(
+            str(output_file),
+            fps=fps,
+            codec='libx264',
+            audio_codec='aac',
+            bitrate='5000k',
+            preset='fast',
+            logger='bar'
+        )
+
+        # Закрываем клипы
+        for clip in clips:
+            try:
+                clip.close()
+            except:
+                pass
+        if len(clips) > 1:
+            final_chunk.close()
+
+        success = output_file.exists() and output_file.stat().st_size > 1000
+        print(f"   ✅ Чанк {chunk_idx + 1} записан: {output_file.name} ({chunk_duration:.1f}s)")
+        return success, chunk_duration
+
+    except Exception as e:
+        print(f"   ❌ Ошибка чанка {chunk_idx + 1}: {e}")
+        return False, 0.0
+
+    finally:
+        if video:
+            video.close()
+        gc.collect()
+
+
+def concatenate_chunks(chunk_files: List[Path], output_path: Path):
+    """Склеивает чанки через ffmpeg concat."""
+    print("\n🔗 Склеивание чанков через ffmpeg...")
+
+    concat_list = output_path.parent / 'concat_list.txt'
+
+    with open(concat_list, 'w', encoding='utf-8') as f:
+        for chunk_file in chunk_files:
+            escaped = str(chunk_file.absolute()).replace("'", "'\\''")
+            f.write(f"file '{escaped}'\n")
+
+    cmd = [
+        'ffmpeg', '-hide_banner', '-y',
+        '-f', 'concat', '-safe', '0',
+        '-i', str(concat_list),
+        '-c', 'copy',
+        '-movflags', '+faststart',
+        str(output_path)
+    ]
+
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    concat_list.unlink(missing_ok=True)
+
+    if result.returncode != 0:
+        print(f"   ❌ Ошибка ffmpeg: {result.stderr[:200]}")
+        return False
+
+    print(f"   ✅ Склеено в {output_path.name}")
+    return True
 
 
 def process_video(
@@ -152,44 +275,41 @@ def process_video(
     output_video: Path,
     output_srt: Path
 ):
-    """Основная функция обработки видео через MoviePy 2.x"""
+    """Основная функция с обработкой чанками."""
 
-    # === ИМПОРТ MOVIEPY 2.x ===
+    # === ИМПОРТ ===
     try:
-        from moviepy import VideoFileClip, concatenate_videoclips
+        from moviepy import VideoFileClip
         print("✅ MoviePy 2.x загружен")
     except ImportError:
-        print("❌ MoviePy 2.x не установлен!")
-        print("   pip install moviepy")
+        print("❌ MoviePy 2.x не установлен! pip install moviepy")
         sys.exit(1)
 
     print("\n" + "=" * 60)
-    print("  🎬 VIDEO SPEED ADJUSTER v6.1 (Pure MoviePy 2.x)")
+    print("  🎬 VIDEO SPEED ADJUSTER v6.2 (Chunked Processing)")
     print("=" * 60)
     print(f"  Target CPS: {TARGET_CPS}")
-    print(f"  Soft threshold: {SOFT_THRESHOLD}")
-    print(f"  Hard threshold: {HARD_THRESHOLD}")
-    print(f"  Max slowdown: {MAX_SLOWDOWN}x")
+    print(f"  Chunk size: {CHUNK_SIZE} сегментов")
     print("=" * 60)
 
-    # === ЧИТАЕМ СУБТИТРЫ ===
+    # === СУБТИТРЫ ===
     print("\n📝 Загрузка субтитров...")
 
     eng_content = read_file_with_encoding(eng_srt)
     if not eng_content:
-        print(f"❌ Не удалось прочитать SRT: {eng_srt}")
+        print(f"❌ Не удалось прочитать: {eng_srt}")
         sys.exit(1)
 
     eng_subs = parse_srt(eng_content)
     if not eng_subs:
-        print("❌ SRT файл пустой!")
+        print("❌ SRT пустой!")
         sys.exit(1)
     print(f"   Субтитров: {len(eng_subs)}")
 
-    # === ЧИТАЕМ ПЕРЕВОД ===
+    # === ПЕРЕВОД ===
     rus_content = read_file_with_encoding(rus_translation)
     if not rus_content:
-        print(f"❌ Не удалось прочитать перевод: {rus_translation}")
+        print(f"❌ Не удалось прочитать: {rus_translation}")
         sys.exit(1)
 
     if rus_translation.suffix.lower() == '.srt':
@@ -198,25 +318,23 @@ def process_video(
         rus_texts = parse_numbered_text(rus_content)
 
     if not rus_texts:
-        print(f"❌ Перевод пустой!")
+        print("❌ Перевод пустой!")
         sys.exit(1)
-    print(f"   Русских текстов: {len(rus_texts)}")
+    print(f"   Русских: {len(rus_texts)}")
 
-    if len(eng_subs) != len(rus_texts):
-        print(f"⚠️  Количество не совпадает! Используем: {min(len(eng_subs), len(rus_texts))}")
-
-    # === ЗАГРУЖАЕМ ВИДЕО ===
-    print("\n📼 Загрузка видео...")
+    # === ВИДЕО ИНФО ===
+    print("\n📼 Анализ видео...")
     video = VideoFileClip(str(input_video))
     video_duration = video.duration
     video_fps = video.fps
+    video.close()
     print(f"   Длительность: {seconds_to_srt_time(video_duration)}")
     print(f"   FPS: {video_fps}")
 
     # === СТРОИМ СЕГМЕНТЫ ===
     print("\n🔍 Построение сегментов...")
 
-    segments_info = []
+    segments = []
     count = min(len(eng_subs), len(rus_texts))
     current_pos = 0.0
     total_slow = 0
@@ -227,9 +345,9 @@ def process_video(
         start = sub['start']
         end = sub['end']
 
-        # Gap перед субтитром
+        # Gap
         if start > current_pos + 0.05:
-            segments_info.append({
+            segments.append({
                 'start': current_pos,
                 'end': start,
                 'slowdown': 1.0,
@@ -239,7 +357,6 @@ def process_video(
 
         if start < current_pos:
             start = current_pos
-
         if start >= end:
             continue
 
@@ -248,11 +365,8 @@ def process_video(
 
         if slowdown > 1.01:
             total_slow += 1
-            orig_cps = len(rus_text) / duration
-            new_cps = len(rus_text) / (duration * slowdown)
-            print(f"   #{i+1:03d} CPS: {orig_cps:.1f} → {new_cps:.1f} (x{slowdown:.2f})")
 
-        segments_info.append({
+        segments.append({
             'start': start,
             'end': end,
             'slowdown': slowdown,
@@ -262,9 +376,9 @@ def process_video(
 
         current_pos = end
 
-    # Хвост видео
+    # Хвост
     if current_pos < video_duration - 0.05:
-        segments_info.append({
+        segments.append({
             'start': current_pos,
             'end': video_duration,
             'slowdown': 1.0,
@@ -272,109 +386,111 @@ def process_video(
             'text': ''
         })
 
-    print(f"\n   📊 Сегментов: {len(segments_info)} | Замедлений: {total_slow}")
+    num_chunks = (len(segments) + CHUNK_SIZE - 1) // CHUNK_SIZE
+    print(f"   Сегментов: {len(segments)} | Замедлений: {total_slow}")
+    print(f"   Чанков: {num_chunks} (по {CHUNK_SIZE} сегментов)")
 
-    # === ОБРАБОТКА ЧЕРЕЗ MOVIEPY ===
-    print("\n🚀 Обработка сегментов в памяти...")
+    # === ВРЕМЕННАЯ ПАПКА ===
+    temp_dir = Path(tempfile.mkdtemp(prefix='video_chunks_'))
+    print(f"\n📁 Временная папка: {temp_dir}")
 
-    clips = []
-    new_timings = []
-    current_output_time = 0.0
+    try:
+        # === ОБРАБОТКА ЧАНКАМИ ===
+        print("\n🚀 Обработка чанками...")
 
-    for idx, seg in enumerate(segments_info):
-        start = seg['start']
-        end = seg['end']
-        slowdown = seg['slowdown']
-        duration = end - start
+        chunk_files = []
+        chunk_durations = []
+        total_output_time = 0.0
 
-        if duration < 0.04:
-            continue
+        for chunk_idx in range(num_chunks):
+            start_idx = chunk_idx * CHUNK_SIZE
+            end_idx = min(start_idx + CHUNK_SIZE, len(segments))
+            chunk_segments = segments[start_idx:end_idx]
 
-        # Вырезаем сегмент (MoviePy 2.x)
-        clip = video.subclipped(start, end)
+            chunk_file = temp_dir / f"chunk_{chunk_idx:04d}.mp4"
 
-        # Замедляем если нужно (MoviePy 2.x)
-        if slowdown > 1.01:
-            speed_factor = 1.0 / slowdown
-            clip = clip.with_speed_scaled(speed_factor)
-            new_duration = duration * slowdown
+            success, duration = process_chunk(
+                video_path=str(input_video),
+                segments=chunk_segments,
+                output_file=chunk_file,
+                fps=video_fps,
+                chunk_idx=chunk_idx,
+                total_chunks=num_chunks
+            )
+
+            if success:
+                chunk_files.append(chunk_file)
+                chunk_durations.append(duration)
+                total_output_time += duration
+
+            gc.collect()
+
+        if not chunk_files:
+            print("❌ Ни один чанк не создан!")
+            sys.exit(1)
+
+        # === СКЛЕЙКА ===
+        if len(chunk_files) == 1:
+            # Один чанк - просто копируем
+            shutil.copy(chunk_files[0], output_video)
         else:
-            new_duration = duration
+            concatenate_chunks(chunk_files, output_video)
 
-        clips.append(clip)
+        if not output_video.exists():
+            print("❌ Выходное видео не создано!")
+            sys.exit(1)
 
-        # Сохраняем тайминги для субтитров
-        if seg['sub_index'] is not None and seg['text']:
-            new_timings.append({
-                'index': seg['sub_index'],
-                'start': current_output_time,
-                'end': current_output_time + new_duration,
-                'text': seg['text']
-            })
+        # === СУБТИТРЫ ===
+        print("\n✍️ Генерация субтитров...")
 
-        current_output_time += new_duration
+        new_timings = []
+        current_time = 0.0
+        seg_idx = 0
 
-        # Прогресс каждые 50 сегментов
-        if (idx + 1) % 50 == 0 or idx == len(segments_info) - 1:
-            print(f"   Обработано: {idx + 1}/{len(segments_info)}")
+        for chunk_idx, chunk_segs in enumerate([segments[i:i+CHUNK_SIZE] for i in range(0, len(segments), CHUNK_SIZE)]):
+            for seg in chunk_segs:
+                duration = seg['end'] - seg['start']
+                if duration < 0.04:
+                    continue
 
-    if not clips:
-        print("❌ Нет сегментов!")
-        video.close()
-        sys.exit(1)
+                slowdown = seg['slowdown']
+                new_duration = duration * slowdown if slowdown > 1.01 else duration
 
-    # === СКЛЕЙКА ===
-    print("\n🔗 Склеивание...")
-    final_clip = concatenate_videoclips(clips, method="compose")
-    print(f"   Итоговая длительность: {seconds_to_srt_time(final_clip.duration)}")
+                if seg['sub_index'] is not None and seg['text']:
+                    new_timings.append({
+                        'index': seg['sub_index'],
+                        'start': current_time,
+                        'end': current_time + new_duration,
+                        'text': seg['text']
+                    })
 
-    # === ЗАПИСЬ ===
-    print("\n💾 Запись видео (это займёт время)...")
+                current_time += new_duration
 
-    final_clip.write_videofile(
-        str(output_video),
-        fps=video_fps,
-        codec='libx264',
-        audio_codec='aac',
-        bitrate='5000k',
-        preset='fast',
-        logger='bar'
-    )
+        srt_lines = []
+        for t in new_timings:
+            srt_lines.append(f"{t['index']}\n{seconds_to_srt_time(t['start'])} --> {seconds_to_srt_time(t['end'])}\n{t['text']}")
 
-    # === СУБТИТРЫ ===
-    print("\n✍️ Генерация субтитров...")
-    srt_lines = []
-    for timing in new_timings:
-        start_time = seconds_to_srt_time(timing['start'])
-        end_time = seconds_to_srt_time(timing['end'])
-        srt_lines.append(f"{timing['index']}\n{start_time} --> {end_time}\n{timing['text']}")
+        output_srt.write_text('\n\n'.join(srt_lines), encoding='utf-8')
+        print(f"   Сохранено: {len(srt_lines)} субтитров")
 
-    output_srt.write_text('\n\n'.join(srt_lines), encoding='utf-8')
-    print(f"   Сохранено: {len(srt_lines)} субтитров")
+        # === ИТОГИ ===
+        total_chars = sum(len(t['text']) for t in new_timings)
+        avg_cps = total_chars / current_time if current_time > 0 else 0
 
-    # === ОЧИСТКА ===
-    print("\n🧹 Очистка памяти...")
-    for clip in clips:
-        try:
-            clip.close()
-        except:
-            pass
-    final_clip.close()
-    video.close()
-    gc.collect()
+        print(f"\n{'=' * 60}")
+        print("✅ ГОТОВО!")
+        print(f"   📹 Видео: {output_video}")
+        print(f"   📝 Субтитры: {output_srt}")
+        print(f"   ⏱️  Было: {seconds_to_srt_time(video_duration)}")
+        print(f"   ⏱️  Стало: {seconds_to_srt_time(current_time)}")
+        print(f"   📊 Средний CPS: {avg_cps:.1f}")
+        print(f"   📦 Чанков обработано: {len(chunk_files)}")
+        print(f"{'=' * 60}\n")
 
-    # === ИТОГИ ===
-    total_chars = sum(len(t['text']) for t in new_timings)
-    avg_cps = total_chars / current_output_time if current_output_time > 0 else 0
-
-    print(f"\n{'=' * 60}")
-    print("✅ ГОТОВО!")
-    print(f"   📹 Видео: {output_video}")
-    print(f"   📝 Субтитры: {output_srt}")
-    print(f"   ⏱️  Было: {seconds_to_srt_time(video_duration)}")
-    print(f"   ⏱️  Стало: {seconds_to_srt_time(current_output_time)}")
-    print(f"   📊 Средний CPS: {avg_cps:.1f}")
-    print(f"{'=' * 60}\n")
+    finally:
+        print("🧹 Очистка временных файлов...")
+        shutil.rmtree(temp_dir, ignore_errors=True)
+        gc.collect()
 
 
 def main():
@@ -398,11 +514,9 @@ def main():
     if not input_video.exists():
         print(f"❌ Видео не найдено: {input_video}")
         sys.exit(1)
-
     if not eng_srt.exists():
         print(f"❌ SRT не найден: {eng_srt}")
         sys.exit(1)
-
     if not rus_translation.exists():
         print(f"❌ Перевод не найден: {rus_translation}")
         sys.exit(1)
