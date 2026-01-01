@@ -317,16 +317,27 @@ def process_segment_batch(
                 ffmpeg_params = get_ffmpeg_params(encoder)
                 ffmpeg_params.extend(['-c:a', 'aac', '-b:a', '128k'])
 
-                clip.write_videofile(
-                    str(output_file),
-                    fps=fps,
-                    codec=encoder if encoder == 'h264_nvenc' else 'libx264',
-                    audio_codec='aac',
-                    ffmpeg_params=ffmpeg_params,
-                    threads=4,
-                    logger=None,
-                    verbose=False
-                )
+                # MoviePy 2.x имеет другие параметры write_videofile
+                if moviepy_version >= 2:
+                    clip.write_videofile(
+                        str(output_file),
+                        fps=fps,
+                        codec=encoder if encoder == 'h264_nvenc' else 'libx264',
+                        audio_codec='aac',
+                        ffmpeg_params=ffmpeg_params,
+                        logger=None
+                    )
+                else:
+                    clip.write_videofile(
+                        str(output_file),
+                        fps=fps,
+                        codec=encoder if encoder == 'h264_nvenc' else 'libx264',
+                        audio_codec='aac',
+                        ffmpeg_params=ffmpeg_params,
+                        threads=4,
+                        logger=None,
+                        verbose=False
+                    )
 
                 clip.close()
 
