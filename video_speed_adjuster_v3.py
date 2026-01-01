@@ -319,13 +319,14 @@ def process_segment_batch(
 
                 # MoviePy 2.x имеет другие параметры write_videofile
                 if moviepy_version >= 2:
+                    # В MoviePy 2.x logger=None вызывает баг, используем "bar"
                     clip.write_videofile(
                         str(output_file),
                         fps=fps,
                         codec=encoder if encoder == 'h264_nvenc' else 'libx264',
                         audio_codec='aac',
                         ffmpeg_params=ffmpeg_params,
-                        logger=None
+                        logger="bar"  # "bar" = прогресс-бар, None вызывает баг
                     )
                 else:
                     clip.write_videofile(
