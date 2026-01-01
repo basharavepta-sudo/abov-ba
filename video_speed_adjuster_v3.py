@@ -233,6 +233,33 @@ def get_ffmpeg_params(encoder: str) -> List[str]:
         ]
 
 
+def get_moviepy_version():
+    """Определяет версию MoviePy и возвращает класс VideoFileClip"""
+    try:
+        from moviepy import VideoFileClip  # MoviePy 2.x
+        return VideoFileClip, 2
+    except ImportError:
+        from moviepy.editor import VideoFileClip  # MoviePy 1.x
+        return VideoFileClip, 1
+
+
+def subclip_compat(video, start, end, version):
+    """Совместимая функция для вырезки сегмента"""
+    if version >= 2:
+        return video.subclipped(start, end)
+    else:
+        return video.subclip(start, end)
+
+
+def speedx_compat(clip, factor, version):
+    """Совместимая функция для изменения скорости"""
+    if version >= 2:
+        return clip.with_speed_scaled(factor)
+    else:
+        from moviepy.video.fx.speedx import speedx
+        return speedx(clip, factor)
+
+
 def process_segment_batch(
     video_path: str,
     segments: List[Dict],
@@ -245,8 +272,7 @@ def process_segment_batch(
     Обрабатывает батч сегментов и сохраняет во временные файлы.
     Возвращает информацию о сохранённых файлах.
     """
-    from moviepy.editor import VideoFileClip
-    from moviepy.video.fx.speedx import speedx
+    VideoFileClip, moviepy_version = get_moviepy_version()
 
     results = []
     video = None
@@ -265,14 +291,14 @@ def process_segment_batch(
                 continue
 
             try:
-                # Вырезаем сегмент
-                clip = video.subclip(start, end)
+                # Вырезаем сегмент (совместимо с 1.x и 2.x)
+                clip = subclip_compat(video, start, end, moviepy_version)
 
                 # Применяем замедление если нужно
-                # speedx(factor) где factor < 1 = замедление
+                # factor < 1 = замедление
                 if slowdown > 1.01:
                     speed_factor = 1.0 / slowdown
-                    clip = speedx(clip, speed_factor)
+                    clip = speedx_compat(clip, speed_factor, moviepy_version)
                     new_duration = duration * slowdown
                 else:
                     new_duration = duration
@@ -370,9 +396,9 @@ def process_video(
     4. Применяет замедление где нужно
     5. Склеивает и сохраняет
     """
-    # Импорты MoviePy (здесь, чтобы ошибка была понятнее если не установлен)
+    # Импорты MoviePy (поддержка 1.x и 2.x)
     try:
-        from moviepy.editor import VideoFileClip
+        VideoFileClip, MOVIEPY_VERSION = get_moviepy_version()
     except ImportError:
         print("=" * 60)
         print("❌ MoviePy не установлен!")
@@ -387,6 +413,7 @@ def process_video(
     print("\n" + "=" * 60)
     print("  🎬 VIDEO SPEED ADJUSTER v6.0 (MoviePy Edition)")
     print("=" * 60)
+    print(f"  MoviePy version: {MOVIEPY_VERSION}.x")
     print(f"  Target CPS: {TARGET_CPS}")
     print(f"  Soft threshold: {SOFT_THRESHOLD}")
     print(f"  Hard threshold: {HARD_THRESHOLD}")
