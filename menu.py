@@ -8,7 +8,7 @@ A convenient menu for all subtitle and video processing tools.
 Workflow:
 1. Transcribe audio (input.mp3 -> output.srt)
 2. Export to text (output.srt -> output.txt) - for translation
-3. Merge translated text (output.srt + Penis.txt -> result.srt)
+3. Merge translated text (output.srt + translated.txt -> result.srt)
 4. Adjust video speed (input.mp4 + subtitles -> output_adjusted.mp4)
 """
 
@@ -48,7 +48,7 @@ def print_file_status():
         ("input.mp4", "Video input for speed adjustment"),
         ("output.srt", "English subtitles (from transcription)"),
         ("output.txt", "Numbered text (for translation)"),
-        ("Penis.txt", "Translated text (numbered)"),
+        ("translated.txt", "Translated text (numbered)"),
         ("russian.srt", "Russian subtitles (alternative)"),
         ("result.srt", "Merged subtitles (timing + translation)"),
         ("output_adjusted.mp4", "Speed-adjusted video"),
@@ -103,7 +103,7 @@ def show_menu():
   ║                                                               ║
   ║   SUBTITLE PROCESSING                                         ║
   ║   [2] Export to text      (output.srt -> output.txt)          ║
-  ║   [3] Merge translation   (output.srt + Penis.txt -> result)  ║
+  ║   [3] Merge translation   (output.srt + translated.txt -> result)  ║
   ║                                                               ║
   ║   VIDEO PROCESSING                                            ║
   ║   [4] Adjust video speed  (match video to translation)        ║
@@ -147,12 +147,12 @@ def show_help():
   ║                                                               ║
   ║  STEP 4: SAVE TRANSLATION                                     ║
   ║  ────────────────────────                                     ║
-  ║  Save translated text as Penis.txt in this folder             ║
+  ║  Save translated text as translated.txt in this folder             ║
   ║  Keep the same numbered format (1. text, 2. text, etc.)       ║
   ║                                                               ║
   ║  STEP 5: MERGE [Option 3]                                     ║
   ║  ────────────────────────                                     ║
-  ║  Combines timings from output.srt with text from Penis.txt    ║
+  ║  Combines timings from output.srt with text from translated.txt    ║
   ║  Creates result.srt                                           ║
   ║                                                               ║
   ║  STEP 6: ADJUST VIDEO [Option 4]                              ║
@@ -235,9 +235,9 @@ def main():
                 print("\n  ERROR: output.srt not found!")
                 input("\n  Press Enter to continue...")
                 continue
-            if not (SCRIPT_DIR / "Penis.txt").exists():
-                print("\n  ERROR: Penis.txt not found!")
-                print("  Save your translated text as 'Penis.txt' in this folder.")
+            if not (SCRIPT_DIR / "translated.txt").exists():
+                print("\n  ERROR: translated.txt not found!")
+                print("  Save your translated text as 'translated.txt' in this folder.")
                 input("\n  Press Enter to continue...")
                 continue
             run_script("text_to_srt.py", "Merge Translation with Timings")
@@ -252,9 +252,9 @@ def main():
                 print("\n  ERROR: output.srt not found!")
                 input("\n  Press Enter to continue...")
                 continue
-            if not (SCRIPT_DIR / "Penis.txt").exists() and not (SCRIPT_DIR / "russian.srt").exists():
+            if not (SCRIPT_DIR / "translated.txt").exists() and not (SCRIPT_DIR / "russian.srt").exists():
                 print("\n  ERROR: No translation found!")
-                print("  Need either Penis.txt or russian.srt")
+                print("  Need either translated.txt or russian.srt")
                 input("\n  Press Enter to continue...")
                 continue
             run_script("video_speed_adjuster_v3.py", "Video Speed Adjuster")
@@ -279,7 +279,7 @@ def main():
                     print("  Next steps:")
                     print("  1. Open output.txt")
                     print("  2. Translate it (ChatGPT/Claude)")
-                    print("  3. Save translation as Penis.txt")
+                    print("  3. Save translation as translated.txt")
                     print("  4. Run option [6] for post-translation")
 
             input("\n  Press Enter to continue...")
@@ -292,8 +292,8 @@ def main():
             missing = []
             if not (SCRIPT_DIR / "output.srt").exists():
                 missing.append("output.srt")
-            if not (SCRIPT_DIR / "Penis.txt").exists():
-                missing.append("Penis.txt")
+            if not (SCRIPT_DIR / "translated.txt").exists():
+                missing.append("translated.txt")
             if not (SCRIPT_DIR / "input.mp4").exists():
                 missing.append("input.mp4")
 
