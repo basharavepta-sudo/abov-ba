@@ -56,7 +56,7 @@ python build.py --clean  # Clean build artifacts
 
 4. **Translate**
    - Send `output.txt` to ChatGPT/Claude for translation
-   - Save result as `Penis.txt` (keep numbered format)
+   - Save result as `translated.txt` (keep numbered format)
 
 5. **Merge Translation** (Option 3)
    - Combines timings + translation → `result.srt`

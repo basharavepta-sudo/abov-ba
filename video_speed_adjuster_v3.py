@@ -333,14 +333,14 @@ def main():
     input_video = Path(os.environ.get('VST_VIDEO_INPUT', script_dir / 'input.mp4'))
     eng_srt = Path(os.environ.get('VST_SRT_INPUT', script_dir / 'output.srt'))
 
-    # Перевод: сначала проверяем env, потом russian.srt, потом Penis.txt
+    # Перевод: сначала проверяем env, потом russian.srt, потом translated.txt
     translation_env = os.environ.get('VST_TRANSLATION', '')
     if translation_env:
         rus_translation = Path(translation_env)
     elif (script_dir / 'russian.srt').exists():
         rus_translation = script_dir / 'russian.srt'
     else:
-        rus_translation = script_dir / 'Penis.txt'
+        rus_translation = script_dir / 'translated.txt'
 
     output_dir = Path(os.environ.get('VST_OUTPUT_DIR', '')) or input_video.parent
     output_video = output_dir / 'output_adjusted.mp4'

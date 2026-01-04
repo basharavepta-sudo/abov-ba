@@ -2,7 +2,7 @@
 """
 Text to SRT Converter
 
-Takes timings from output.srt and text from Penis.txt
+Takes timings from output.srt and text from translated.txt
 and creates a new SRT file with the combined result.
 
 Files must be in the same folder as this script.
@@ -93,7 +93,7 @@ def main():
 
     # Input files
     srt_file = script_dir / 'output.srt'
-    text_file = script_dir / 'Penis.txt'
+    text_file = script_dir / 'translated.txt'
 
     # Output file
     output_file = script_dir / 'result.srt'
