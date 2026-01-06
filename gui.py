@@ -104,17 +104,22 @@ class StyledButton(tk.Canvas):
     def __init__(self, parent, text, command=None, width=140, height=36,
                  accent=False, tooltip=None):
         super().__init__(parent, width=width, height=height,
-                        bg=Theme.BG_SECONDARY, highlightthickness=0)
+                        bg=Theme.BG_SECONDARY, highlightthickness=0, takefocus=1)
         self.text = text
         self.command = command
         self.width = width
         self.height = height
         self.accent = accent
         self.hovered = False
+        self.focused = False
         self.disabled = False
         self.bind("<Enter>", self._on_enter)
         self.bind("<Leave>", self._on_leave)
+        self.bind("<FocusIn>", self._on_focus_in)
+        self.bind("<FocusOut>", self._on_focus_out)
         self.bind("<Button-1>", self._on_click)
+        self.bind("<Return>", self._on_click)
+        self.bind("<space>", self._on_click)
         self._draw()
         if tooltip:
             Tooltip(self, tooltip)
@@ -130,6 +135,10 @@ class StyledButton(tk.Canvas):
             bg = Theme.BG_BUTTON if not self.hovered else "#30363d"
             fg = Theme.TEXT
             border = "#30363d" if not self.hovered else Theme.ACCENT
+
+        if self.focused:
+            border = Theme.ACCENT_GLOW
+
         r = 6
         self._rounded_rect(2, 2, self.width-2, self.height-2, r, bg, border)
         self.create_text(self.width//2, self.height//2, text=self.text,
@@ -150,6 +159,15 @@ class StyledButton(tk.Canvas):
 
     def _on_leave(self, e):
         self.hovered = False
+        self._draw()
+
+    def _on_focus_in(self, e):
+        if not self.disabled:
+            self.focused = True
+            self._draw()
+
+    def _on_focus_out(self, e):
+        self.focused = False
         self._draw()
 
     def _on_click(self, e):
@@ -338,7 +356,7 @@ class MainApplication(tk.Tk):
         self.srt_input.pack(fill="x", padx=15, pady=5)
 
         # Translation input
-        self.trans_input = FileInput(files_frame, "Translation (.txt / .srt)", "Penis.txt",
+        self.trans_input = FileInput(files_frame, "Translation (.txt / .srt)", "translated.txt",
                                      [("Text files", "*.txt"), ("SRT files", "*.srt"), ("All", "*.*")],
                                      tooltip="Translated text file (numbered format)")
         self.trans_input.pack(fill="x", padx=15, pady=5)
@@ -568,7 +586,7 @@ class MainApplication(tk.Tk):
                     self.msg_queue.put(("done", False))
                     return
 
-            self.msg_queue.put(("log", "\n✓ Pipeline complete! Translate output.txt → Penis.txt"))
+            self.msg_queue.put(("log", "\n✓ Pipeline complete! Translate output.txt → translated.txt"))
             self.msg_queue.put(("done", True))
 
         threading.Thread(target=run, daemon=True).start()
