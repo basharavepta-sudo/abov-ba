@@ -1,0 +1,3 @@
+## 2024-05-22 - Canvas Buttons and Keyboard Accessibility
+**Learning:** Custom Tkinter widgets inheriting from `Canvas` are invisible to keyboard navigation by default. They require `takefocus=1` to be reachable via Tab, and explicit bindings for `<FocusIn>`, `<FocusOut>`, `<Return>`, and `<space>` to function like standard buttons.
+**Action:** Always verify `takefocus=1` and keyboard bindings when creating or reviewing custom Canvas-based interactive elements. Ensure visual focus indicators (like glow or border change) are drawn manually since `highlightthickness=0` is often used to remove the default ugly border.
