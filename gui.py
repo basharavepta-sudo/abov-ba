@@ -104,17 +104,23 @@ class StyledButton(tk.Canvas):
     def __init__(self, parent, text, command=None, width=140, height=36,
                  accent=False, tooltip=None):
         super().__init__(parent, width=width, height=height,
-                        bg=Theme.BG_SECONDARY, highlightthickness=0)
+                        bg=Theme.BG_SECONDARY, highlightthickness=0,
+                        takefocus=1)
         self.text = text
         self.command = command
         self.width = width
         self.height = height
         self.accent = accent
         self.hovered = False
+        self.focused = False
         self.disabled = False
         self.bind("<Enter>", self._on_enter)
         self.bind("<Leave>", self._on_leave)
+        self.bind("<FocusIn>", self._on_focus_in)
+        self.bind("<FocusOut>", self._on_focus_out)
         self.bind("<Button-1>", self._on_click)
+        self.bind("<Return>", self._on_click_key)
+        self.bind("<space>", self._on_click_key)
         self._draw()
         if tooltip:
             Tooltip(self, tooltip)
@@ -135,6 +141,21 @@ class StyledButton(tk.Canvas):
         self.create_text(self.width//2, self.height//2, text=self.text,
                         font=Theme.FONT_NORMAL, fill=fg)
 
+        if self.focused and not self.disabled:
+            # Draw rounded focus ring
+            r = 6
+            x1, y1, x2, y2 = 2, 2, self.width-2, self.height-2
+            color = Theme.ACCENT_GLOW
+            w = 2
+            self.create_arc(x1, y1, x1+2*r, y1+2*r, start=90, extent=90, style="arc", outline=color, width=w)
+            self.create_arc(x2-2*r, y1, x2, y1+2*r, start=0, extent=90, style="arc", outline=color, width=w)
+            self.create_arc(x1, y2-2*r, x1+2*r, y2, start=180, extent=90, style="arc", outline=color, width=w)
+            self.create_arc(x2-2*r, y2-2*r, x2, y2, start=270, extent=90, style="arc", outline=color, width=w)
+            self.create_line(x1+r, y1, x2-r, y1, fill=color, width=w)
+            self.create_line(x1+r, y2, x2-r, y2, fill=color, width=w)
+            self.create_line(x1, y1+r, x1, y2-r, fill=color, width=w)
+            self.create_line(x2, y1+r, x2, y2-r, fill=color, width=w)
+
     def _rounded_rect(self, x1, y1, x2, y2, r, fill, outline):
         self.create_arc(x1, y1, x1+2*r, y1+2*r, start=90, extent=90, fill=fill, outline=outline)
         self.create_arc(x2-2*r, y1, x2, y1+2*r, start=0, extent=90, fill=fill, outline=outline)
@@ -152,12 +173,25 @@ class StyledButton(tk.Canvas):
         self.hovered = False
         self._draw()
 
+    def _on_focus_in(self, e):
+        if not self.disabled:
+            self.focused = True
+            self._draw()
+
+    def _on_focus_out(self, e):
+        self.focused = False
+        self._draw()
+
+    def _on_click_key(self, e):
+        self._on_click(e)
+
     def _on_click(self, e):
         if not self.disabled and self.command:
             self.command()
 
     def set_disabled(self, disabled):
         self.disabled = disabled
+        self.configure(takefocus=0 if disabled else 1)
         self._draw()
 
 
