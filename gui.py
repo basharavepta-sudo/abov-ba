@@ -104,17 +104,22 @@ class StyledButton(tk.Canvas):
     def __init__(self, parent, text, command=None, width=140, height=36,
                  accent=False, tooltip=None):
         super().__init__(parent, width=width, height=height,
-                        bg=Theme.BG_SECONDARY, highlightthickness=0)
+                        bg=Theme.BG_SECONDARY, highlightthickness=0, takefocus=1)
         self.text = text
         self.command = command
         self.width = width
         self.height = height
         self.accent = accent
         self.hovered = False
+        self.focused = False
         self.disabled = False
         self.bind("<Enter>", self._on_enter)
         self.bind("<Leave>", self._on_leave)
+        self.bind("<FocusIn>", self._on_focus_in)
+        self.bind("<FocusOut>", self._on_focus_out)
         self.bind("<Button-1>", self._on_click)
+        self.bind("<Return>", self._on_keydown)
+        self.bind("<space>", self._on_keydown)
         self._draw()
         if tooltip:
             Tooltip(self, tooltip)
@@ -124,12 +129,16 @@ class StyledButton(tk.Canvas):
         if self.disabled:
             bg, fg, border = Theme.BG_CARD, Theme.TEXT_DIM, Theme.BG_CARD
         elif self.accent:
-            bg = Theme.ACCENT if not self.hovered else Theme.ACCENT_GLOW
+            bg = Theme.ACCENT if not (self.hovered or self.focused) else Theme.ACCENT_GLOW
             fg, border = Theme.BG_DARK, bg
         else:
-            bg = Theme.BG_BUTTON if not self.hovered else "#30363d"
+            bg = Theme.BG_BUTTON if not (self.hovered or self.focused) else "#30363d"
             fg = Theme.TEXT
-            border = "#30363d" if not self.hovered else Theme.ACCENT
+            border = "#30363d" if not (self.hovered or self.focused) else Theme.ACCENT
+
+        if self.focused:
+            border = Theme.ACCENT_GLOW
+
         r = 6
         self._rounded_rect(2, 2, self.width-2, self.height-2, r, bg, border)
         self.create_text(self.width//2, self.height//2, text=self.text,
@@ -152,12 +161,26 @@ class StyledButton(tk.Canvas):
         self.hovered = False
         self._draw()
 
+    def _on_focus_in(self, e):
+        self.focused = True
+        self._draw()
+
+    def _on_focus_out(self, e):
+        self.focused = False
+        self._draw()
+
+    def _on_keydown(self, e):
+        if not self.disabled:
+            self._on_click(e)
+
     def _on_click(self, e):
+        self.focus_set()
         if not self.disabled and self.command:
             self.command()
 
     def set_disabled(self, disabled):
         self.disabled = disabled
+        self.configure(takefocus=0 if disabled else 1)
         self._draw()
 
 
