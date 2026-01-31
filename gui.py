@@ -104,16 +104,21 @@ class StyledButton(tk.Canvas):
     def __init__(self, parent, text, command=None, width=140, height=36,
                  accent=False, tooltip=None):
         super().__init__(parent, width=width, height=height,
-                        bg=Theme.BG_SECONDARY, highlightthickness=0)
+                        bg=Theme.BG_SECONDARY, highlightthickness=0, takefocus=1)
         self.text = text
         self.command = command
         self.width = width
         self.height = height
         self.accent = accent
         self.hovered = False
+        self.focused = False
         self.disabled = False
         self.bind("<Enter>", self._on_enter)
         self.bind("<Leave>", self._on_leave)
+        self.bind("<FocusIn>", self._on_focus)
+        self.bind("<FocusOut>", self._on_unfocus)
+        self.bind("<Return>", self._on_click_key)
+        self.bind("<space>", self._on_click_key)
         self.bind("<Button-1>", self._on_click)
         self._draw()
         if tooltip:
@@ -130,6 +135,10 @@ class StyledButton(tk.Canvas):
             bg = Theme.BG_BUTTON if not self.hovered else "#30363d"
             fg = Theme.TEXT
             border = "#30363d" if not self.hovered else Theme.ACCENT
+
+        if self.focused:
+            border = Theme.ACCENT_GLOW
+
         r = 6
         self._rounded_rect(2, 2, self.width-2, self.height-2, r, bg, border)
         self.create_text(self.width//2, self.height//2, text=self.text,
@@ -142,6 +151,11 @@ class StyledButton(tk.Canvas):
         self.create_arc(x2-2*r, y2-2*r, x2, y2, start=270, extent=90, fill=fill, outline=outline)
         self.create_rectangle(x1+r, y1, x2-r, y2, fill=fill, outline="")
         self.create_rectangle(x1, y1+r, x2, y2-r, fill=fill, outline="")
+        if outline:
+            self.create_line(x1+r, y1, x2-r, y1, fill=outline)
+            self.create_line(x1+r, y2, x2-r, y2, fill=outline)
+            self.create_line(x1, y1+r, x1, y2-r, fill=outline)
+            self.create_line(x2, y1+r, x2, y2-r, fill=outline)
 
     def _on_enter(self, e):
         if not self.disabled:
@@ -152,7 +166,20 @@ class StyledButton(tk.Canvas):
         self.hovered = False
         self._draw()
 
+    def _on_focus(self, e):
+        if not self.disabled:
+            self.focused = True
+            self._draw()
+
+    def _on_unfocus(self, e):
+        self.focused = False
+        self._draw()
+
+    def _on_click_key(self, e):
+        self._on_click(e)
+
     def _on_click(self, e):
+        self.focus_set()
         if not self.disabled and self.command:
             self.command()
 
